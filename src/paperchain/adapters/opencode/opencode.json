@@ -1,0 +1,20 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": ["AGENTS.md"],
+  "default_agent": "writer",
+  "permissions": [
+    { "action": "edit", "resource": "References/**", "effect": "deny" },
+    { "action": "edit", "resource": "Output/**", "effect": "deny" },
+    { "action": "edit", "resource": "paper.toml", "effect": "deny" },
+    { "action": "edit", "resource": "AGENTS.md", "effect": "deny" },
+    { "action": "shell", "resource": "*", "effect": "deny" },
+    { "action": "shell", "resource": "paperchain *", "effect": "allow" },
+    { "action": "shell", "resource": "paperchain unlock*", "effect": "deny" },
+    { "action": "shell", "resource": "paperchain init*", "effect": "deny" },
+    { "action": "shell", "resource": "git status *", "effect": "allow" },
+    { "action": "shell", "resource": "git diff *", "effect": "allow" },
+    { "action": "external_directory", "resource": "*", "effect": "ask" },
+    { "action": "subagent", "resource": "*", "effect": "deny" },
+    { "action": "subagent", "resource": "scout", "effect": "allow" }
+  ]
+}

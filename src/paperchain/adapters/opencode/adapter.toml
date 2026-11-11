@@ -1,0 +1,16 @@
+name = "opencode"
+description = "OpenCode V2: writer and scout agents, path and shell permissions."
+tested = false
+verified = "opencode 2.2.6: config loads, writer/scout registered, merged rules in the intended order"
+
+[[files]]
+source = "opencode.json"
+target = "opencode.json"
+
+[[files]]
+source = "agents/writer.md"
+target = ".opencode/agents/writer.md"
+
+[[files]]
+source = "agents/scout.md"
+target = ".opencode/agents/scout.md"

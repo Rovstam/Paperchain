@@ -1,0 +1,19 @@
+# Reference files and their extracted text are copies of other people's work.
+References/originals/*
+!References/originals/.gitkeep
+References/_text/*
+!References/_text/.gitkeep
+
+# Generated documents
+Output/*
+!Output/.gitkeep
+
+# Never commit downloaded candidate files.
+Candidates/*.pdf
+Candidates/*.docx
+Candidates/*.doc
+Candidates/*.epub
+
+# Build scratch
+Paper/.paperchain.build.md
+*.tmp
