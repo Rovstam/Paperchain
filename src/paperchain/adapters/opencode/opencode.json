@@ -5,6 +5,9 @@
   "permissions": [
     { "action": "edit", "resource": "References/**", "effect": "deny" },
     { "action": "edit", "resource": "Output/**", "effect": "deny" },
+    { "action": "edit", "resource": "Manuscript/**", "effect": "deny" },
+    { "action": "edit", "resource": "*.docx", "effect": "deny" },
+    { "action": "edit", "resource": "*.pdf", "effect": "deny" },
     { "action": "edit", "resource": "paper.toml", "effect": "deny" },
     { "action": "edit", "resource": "AGENTS.md", "effect": "deny" },
     { "action": "edit", "resource": "opencode.json", "effect": "deny" },
@@ -19,6 +22,7 @@
     { "action": "shell", "resource": "* unlock*", "effect": "deny" },
     { "action": "shell", "resource": "* init*", "effect": "deny" },
     { "action": "shell", "resource": "* convert*", "effect": "deny" },
+    { "action": "shell", "resource": "* import*", "effect": "deny" },
     { "action": "shell", "resource": "* lock*", "effect": "deny" },
     { "action": "shell", "resource": "git status *", "effect": "allow" },
     { "action": "shell", "resource": "git diff *", "effect": "allow" },

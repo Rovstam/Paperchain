@@ -23,11 +23,21 @@ def write_docx(path: Path, paragraphs: list[str], title: str = "", author: str =
         '<Default Extension="xml" ContentType="application/xml"/>'
         '<Override PartName="/word/document.xml" '
         'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+        '<Override PartName="/word/styles.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>'
         "</Types>"
+    )
+    styles = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<w:styles xmlns:w="{W_NS}">'
+        '<w:style w:type="paragraph" w:default="1" w:styleId="Normal">'
+        '<w:name w:val="Normal"/></w:style>'
+        "</w:styles>"
     )
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr("[Content_Types].xml", content_types)
         archive.writestr("word/document.xml", document)
+        archive.writestr("word/styles.xml", styles)
         if title or author:
             core = (
                 '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'

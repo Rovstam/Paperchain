@@ -2,6 +2,8 @@
 
 You are writing one paper from a fixed set of sources. The paper source is `Paper/paper.md`. The `.docx` in `Output/` is generated and never edited by hand.
 
+The human may have put an original manuscript (DOCX or PDF) in `Manuscript/` or the project root. `{{program}} import` copied its text into `Paper/paper.md`; the original is never edited, moved or locked. If `check` reports `manuscript_hash_mismatch`, stop and ask the human to re-import it.
+
 ## The rule that matters
 
 Every factual sentence must be supported by text that exists in `References/_text/`, and must cite a source key and a page. If the sources do not support it, do not write it. This is a hard limit, not a style preference.
@@ -13,23 +15,25 @@ You may summarise, compare and connect sources. You may not add outside knowledg
 | Path | Read | Write |
 | --- | --- | --- |
 | `References/_text/` | yes | never |
-| `References/originals/` | yes | never |
+| `References/**` (PDFs, DOCX, Zotero JSON) | yes | never |
+| `Manuscript/` (the original) | yes | never |
 | `Paper/paper.md` | yes | yes |
 | `Candidates/` | yes | yes |
 | `Output/` | yes | never |
 | `paper.toml` | yes | never |
 | `AGENTS.md` | yes | never |
 
-`References/` is hashed and read-only. If a check reports a hash mismatch, stop and tell the human. Do not try to repair it, and never run `{{program}} unlock`.
+`References/` is hashed and read-only. If a check reports a hash mismatch, stop and tell the human. Do not try to repair it, and never run `{{program}} unlock` or `{{program}} import`.
 
 ## Workflow
 
 1. Run `{{program}} doctor --json`. If it is not `ok`, stop and report the finding.
-2. Read `References/_text/INDEX.md`, then the source files you need.
-3. Draft in `Paper/paper.md` using the citation syntax below.
-4. Run `{{program}} check --json`. Fix every error. Warnings are yours to judge.
-5. Run `{{program}} build`. The document appears in `Output/`.
-6. Report what you changed and which citations you added.
+2. If `Paper/paper.md` is still the template, ask the human to run `{{program}} import` on the original manuscript.
+3. Read `References/_text/INDEX.md`, then the source files you need.
+4. Draft in `Paper/paper.md` using the citation syntax below.
+5. Run `{{program}} check --json`. Fix every error. Warnings are yours to judge.
+6. Run `{{program}} build`. The document appears in `Output/`.
+7. Report what you changed and which citations you added.
 
 If the same error survives three attempts, stop and ask the human.
 
@@ -50,6 +54,8 @@ These are the only accepted forms. `[see @key]`, `[-@key]` and a bare `@key` are
 
 The quote is evidence, not text. It is removed from the built document; the citation remains as `(Author, Year, p. 12)`.
 
+If the project has `References/library.json` (a CSL JSON export from Zotero), `build` uses Pandoc citeproc and that library is the authority for titles, authors and journal details. Keys must match the Better BibTeX citation keys.
+
 ## When a source is missing
 
 Do not fill the gap from memory. Write `Candidates/<key>.md`:
@@ -61,7 +67,7 @@ where: https://doi.org/... or a file name
 why: the claim in section 3 needs this
 ```
 
-Then stop and ask the human to add it. The human downloads the file into `References/originals/`, then runs `{{program}} convert` and `{{program}} lock`.
+Then stop and ask the human to add it. The human downloads the file into `References/`, then runs `{{program}} convert` and `{{program}} lock`.
 
 A candidate is not a source. You cannot cite it.
 
@@ -77,6 +83,6 @@ A candidate is not a source. You cannot cite it.
 
 Allowed: `{{program}} doctor`, `{{program}} check`, `{{program}} build`, `git status`, `git diff`.
 
-Not allowed: `{{program}} convert`, `{{program}} lock`, `{{program}} unlock`, `{{program}} init`, any `--force` flag, editing any `.docx`, deleting files, installing packages, or changing `paper.toml`.
+Not allowed: `{{program}} import`, `{{program}} convert`, `{{program}} lock`, `{{program}} unlock`, `{{program}} init`, any `--force` flag, editing any `.docx`, deleting files, installing packages, or changing `paper.toml`.
 
 The `scout` subagent may search the web to propose candidates. It cannot write the paper.

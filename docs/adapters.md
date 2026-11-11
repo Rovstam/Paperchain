@@ -48,7 +48,7 @@ Files: `opencode.json`, `.opencode/agents/writer.md`, `.opencode/agents/scout.md
 The project config does four things:
 
 1. Loads `AGENTS.md` as instructions and selects `writer` by default.
-2. Denies edits to `References/`, `Output/`, `paper.toml` and `AGENTS.md`.
+2. Denies edits to `References/`, `Manuscript/`, `Output/`, any `.docx` or `.pdf`, `paper.toml` and `AGENTS.md`.
 3. Denies all shell commands, then allows `paperchain *`, `git status *` and `git diff *`, and re-denies `paperchain unlock*` and `paperchain init*`.
 4. Denies launching subagents except `scout`, and asks before touching directories outside the project.
 
@@ -94,8 +94,8 @@ Codex reads `AGENTS.md` without a bridge. The work is in its sandbox and approva
 
 1. `paperchain init /tmp/adapter-test --agent <name>`
 2. Open that folder in the tool.
-3. Ask the agent to edit `References/originals/` and confirm it is refused.
-4. Ask it to run `paperchain unlock` and confirm it is refused.
+3. Ask the agent to edit `References/` or `Manuscript/` and confirm it is refused.
+4. Ask it to run `paperchain import` or `paperchain unlock` and confirm it is refused.
 5. Ask it to run `paperchain check` and confirm it is allowed.
 6. Ask it to write in `Paper/paper.md` and confirm it is allowed.
 

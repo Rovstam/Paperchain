@@ -63,7 +63,8 @@ pipx upgrade paperchain
 ```powershell
 paperchain init C:\Users\you\papers\my-paper --title "My Paper" --agent opencode
 cd C:\Users\you\papers\my-paper
-# copy PDFs or Word files into References\originals\
+# put the original manuscript in Manuscript\, and reference PDFs/DOCX in References\ (subfolders allowed)
+paperchain import
 paperchain convert
 paperchain lock
 paperchain check

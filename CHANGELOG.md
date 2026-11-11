@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.0 — project folders, manuscript import, Zotero bibliography
+
+### Added
+
+- A project folder can hold the original manuscript in `Manuscript/` (or the project root). `paperchain import` converts it to `Paper/paper.md` and records its hash; the original is never edited, moved or locked. `check` reports `manuscript_hash_mismatch` if it changes later.
+- Reference discovery is recursive under `References/`. Subfolders are allowed, and `References/topic/name.pdf` gets the stable key `topic-name`.
+- Optional CSL JSON bibliography at `References/library.json` (or `[build] bibliography`). When present, `build` uses Pandoc citeproc, and `check` reports `citation_not_in_bibliography` for keys that Zotero does not contain.
+- `[build] csl` selects a CSL style for citeproc.
+- `paperchain init` creates `Manuscript/`, and generated projects now ignore manuscript and nested reference files in git.
+
+### Changed
+
+- `paperchain convert` and `check` scan `References/` recursively instead of only `References/originals/`.
+- `paperchain import` is human-only in the OpenCode adapter.
+- Reference types remain PDF, DOCX, TXT and MD; other files are ignored with a warning. PDF and DOCX are the intended formats.
+
 ## 0.1.2 — second audit fixes
 
 An external re-audit found that the 0.1.1 tests passed but the guarantee still had holes.

@@ -24,8 +24,10 @@ src/paperchain/
 ├── citations.py    syntax parsing and rendering
 ├── check.py        the verifier
 ├── convert.py      writes References/_text
+├── import_cmd.py   original manuscript -> Paper/paper.md
+├── library.py      CSL JSON bibliography loading
 ├── locking.py      hashes and read-only bits
-├── build.py        pandoc
+├── build.py        pandoc, optional citeproc
 ├── init_cmd.py     template and adapter copying
 ├── doctor.py       environment checks
 ├── templates/      copied by `paperchain init`

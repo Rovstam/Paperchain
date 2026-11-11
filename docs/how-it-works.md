@@ -6,15 +6,21 @@ This document is for the human maintaining a paper and for the agent writing it.
 
 ```
 paper.toml            manifest: the source list, hashes and build settings
-References/originals/  the files you supplied
-References/_text/      derived text, one .txt and one .json per source
-Paper/paper.md         the draft
-Candidates/            proposed sources, awaiting a human
-Output/                generated .docx
-AGENTS.md              the rules
+Manuscript/           the original DOCX/PDF; never edited
+References/<topic>/   the PDF/DOCX/TXT/MD files you supplied; subfolders allowed
+References/_text/     derived text, one .txt and one .json per source
+References/library.json  optional CSL JSON export from Zotero
+Paper/paper.md        the draft
+Candidates/           proposed sources, awaiting a human
+Output/               generated .docx
+AGENTS.md             the rules
 ```
 
 Only `Paper/paper.md`, `Candidates/` and `Output/` are ever written by an agent, and `Output/` only through `paperchain build`.
+
+`paperchain import` reads the original manuscript and writes `Paper/paper.md`. The original is never edited, moved or made read-only. Its hash is stored in `paper.toml`; `check` reports `manuscript_hash_mismatch` if it is replaced, so stale Markdown cannot be built silently. DOCX import uses Pandoc (headings, tables and images are kept where Pandoc can represent them). PDF import extracts plain paragraphs and says so in a warning.
+
+Reference paths are relative to `References/` and may be nested. A file directly in `References/` or `References/originals/` keeps its filename as the key; `References/diabetes/study.pdf` becomes `diabetes-study`.
 
 ## Why the draft is Markdown
 
@@ -39,7 +45,7 @@ Word has no fixed pages, so a DOCX becomes a single page and the citation page i
 
 `paperchain lock`:
 
-1. hashes every file in `References/originals/` and its converted JSON;
+1. hashes every converted reference under `References/` and its converted JSON;
 2. re-extracts every original and compares the result with the JSON page map, so a hand-edited page map cannot be blessed;
 3. compares the hashes with the ones already recorded, and refuses to continue if a file changed unless you pass `--accept-changes`;
 4. writes the hashes, page counts and a lock timestamp into `paper.toml`;
@@ -57,7 +63,7 @@ Read-only files protect against accidents. They do not stop a determined process
 
 ## What `check` does
 
-For each source: file exists, hash matches, converted JSON exists, JSON hash matches, and the `.txt` is regenerated from the JSON and compared exactly. The `.txt` is the file the writer reads, so a hand-edited copy is an error, not a warning.
+The original manuscript, if one was imported, is hashed and must still match `paper.toml`. For each source: file exists, hash matches, converted JSON exists, JSON hash matches, and the `.txt` is regenerated from the JSON and compared exactly. The `.txt` is the file the writer reads, so a hand-edited copy is an error, not a warning.
 
 For each citation in `Paper/paper.md`:
 
@@ -104,7 +110,9 @@ Error codes are stable and documented in [troubleshooting](troubleshooting.md).
 
 ## Build
 
-`build` runs `check` first and refuses to write a document while errors remain, unless `--force`. It renders citations to author-year text, appends a reference list for cited sources (skipped if `paper.md` already has a `## References` heading), and calls pandoc with `Paper/` as the working directory so relative image paths behave. The intermediate markdown is deleted afterwards.
+`build` runs `check` first and refuses to write a document while errors remain, unless `--force`. If `References/library.json` exists (or `[build] bibliography` is set), it removes the verification quotes, keeps the page locators, and lets Pandoc citeproc format the citations and bibliography from the CSL JSON. Otherwise it renders citations to author-year text and appends a reference list for cited sources (skipped if `paper.md` already has a `## References` heading). It calls pandoc with `Paper/` as the working directory so relative image paths behave. The intermediate markdown is deleted afterwards.
+
+Citeproc output is static formatted text, not live Zotero fields. Use the Zotero Word plugin when fields must refresh inside Word. The project currently emits DOCX only.
 
 Pandoc is a documented requirement: `doctor` reports it, and `build` stops with `pandoc_missing` rather than producing a half-rendered file.
 

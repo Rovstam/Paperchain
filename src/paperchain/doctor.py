@@ -7,7 +7,9 @@ from dataclasses import asdict, dataclass
 from . import __version__
 from .build import pandoc_version
 from .check import run_check
+from .errors import PaperchainError
 from .project import Project
+from .util import sha256_file
 
 MIN_PYTHON = (3, 10)
 
@@ -73,9 +75,45 @@ def run_doctor(project: Project) -> dict:
     )
 
     manifest = project.manifest
+    if manifest.manuscript_path:
+        manuscript = project.root / manifest.manuscript_path
+        if not manuscript.is_file():
+            checks.append(
+                Check(
+                    "manuscript",
+                    "fail",
+                    f"{manifest.manuscript_path} is missing",
+                    "restore the original, or run `paperchain import` again",
+                )
+            )
+        elif manifest.manuscript_sha256 and sha256_file(manuscript) != manifest.manuscript_sha256:
+            checks.append(
+                Check(
+                    "manuscript",
+                    "fail",
+                    f"{manifest.manuscript_path} changed since import",
+                    "run `paperchain import --force`, then review Paper/paper.md",
+                )
+            )
+        else:
+            checks.append(Check("manuscript", "ok", f"{manifest.manuscript_path} (unchanged since import)"))
+    else:
+        try:
+            manuscript = project.find_manuscript()
+        except PaperchainError:
+            manuscript = None
+        checks.append(
+            Check(
+                "manuscript",
+                "warn",
+                "not imported" if manuscript is None else f"{project.relative(manuscript)} is not imported",
+                "run `paperchain import` to create Paper/paper.md from the original",
+            )
+        )
+
     if not manifest.sources:
         checks.append(
-            Check("references", "warn", "no sources converted", "put sources in References/originals and run `paperchain convert`")
+            Check("references", "warn", "no sources converted", "put PDFs or DOCX under References/ and run `paperchain convert`")
         )
     elif manifest.locked_at:
         checks.append(

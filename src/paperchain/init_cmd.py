@@ -19,6 +19,7 @@ TEXT_SUFFIXES = {".md", ".toml", ".json", ".jsonc", ".txt", ".yml", ".yaml", ".t
 SPECIAL_TEXT_NAMES = {"gitignore", "gitattributes", "AGENTS.md.tmpl"}
 
 DIRECTORIES = [
+    "Manuscript",
     "References/originals",
     "References/_text",
     "Paper",
@@ -192,7 +193,9 @@ def run_init(
             "files": copied + len(adapter_files),
             "adapter_files": adapter_files,
             "next": [
-                "put PDF/DOCX/TXT/MD sources in References/originals",
+                "put the original manuscript DOCX/PDF in Manuscript/ (or the project root)",
+                "put reference PDFs/DOCX in References/; subfolders are allowed",
+                f"{PROGRAM} import",
                 f"{PROGRAM} convert",
                 f"{PROGRAM} lock",
                 f"{PROGRAM} check",

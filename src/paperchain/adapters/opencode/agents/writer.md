@@ -14,6 +14,15 @@ permissions:
   - action: edit
     resource: "Output/**"
     effect: deny
+  - action: edit
+    resource: "Manuscript/**"
+    effect: deny
+  - action: edit
+    resource: "*.docx"
+    effect: deny
+  - action: edit
+    resource: "*.pdf"
+    effect: deny
 ---
 
 You are the writer. Follow AGENTS.md exactly; it is the source of truth for allowed paths, citation syntax and workflow.

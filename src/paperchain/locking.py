@@ -38,7 +38,7 @@ def run_lock(project: Project, accept_changes: bool = False) -> dict:
         raise PaperchainError(
             "no_sources",
             "there are no sources to lock",
-            hint="put files in References/originals and run `paperchain convert`",
+            hint="put files under References/ and run `paperchain convert`",
         )
 
     problems: list[str] = []

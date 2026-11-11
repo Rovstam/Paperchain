@@ -9,6 +9,7 @@ from pathlib import Path
 from .check import Report, run_check
 from .citations import parse_citations, render_markdown
 from .errors import Finding, PaperchainError
+from .library import bibliography_keys
 from .manifest import Source
 from .project import Project
 from .util import human_bytes
@@ -74,8 +75,27 @@ def run_build(project: Project, force: bool = False) -> BuildResult:
 
     sources = {source.key: source for source in project.manifest.sources}
     original = project.paper_md.read_text(encoding="utf-8")
-    rendered = render_markdown(original, sources)
-    rendered += bibliography(original, sources)
+
+    bibliography_file = project.bibliography_path
+    use_citeproc = bibliography_file is not None
+    if use_citeproc:
+        cited = {
+            citation.key
+            for citation in parse_citations(original)
+            if not citation.error
+        }
+        known = bibliography_keys(bibliography_file)
+        missing = sorted(cited - known)
+        if missing:
+            raise PaperchainError(
+                "citation_not_in_bibliography",
+                f"{', '.join(missing)} is not in {project.relative(bibliography_file)}",
+                hint="add the reference in Zotero and export CSL JSON again, or fix the citation key",
+            )
+        rendered = render_markdown_for_citeproc(original)
+    else:
+        rendered = render_markdown(original, sources)
+        rendered += bibliography(original, sources)
 
     project.paper_dir.mkdir(parents=True, exist_ok=True)
     temp_path = project.paper_dir / BUILD_FILENAME
@@ -103,6 +123,22 @@ def run_build(project: Project, force: bool = False) -> BuildResult:
                 hint="fix [build] reference_doc in paper.toml, or remove the line to use pandoc defaults",
             )
         command += ["--reference-doc", str(reference_path.resolve())]
+
+    if use_citeproc and bibliography_file is not None:
+        command += [
+            "--citeproc",
+            "--bibliography",
+            str(bibliography_file),
+        ]
+        csl = project.csl_path
+        if csl is not None:
+            if not csl.is_file():
+                raise PaperchainError(
+                    "csl_missing",
+                    f"the CSL style {project.manifest.csl} does not exist",
+                    hint="fix [build] csl in paper.toml, or remove the line to use pandoc's default style",
+                )
+            command += ["--csl", str(csl)]
 
     try:
         temp_path.write_text(rendered, encoding="utf-8", newline="\n")
@@ -133,6 +169,22 @@ def run_build(project: Project, force: bool = False) -> BuildResult:
 
     result.output = output
     return result
+
+
+def render_markdown_for_citeproc(text: str) -> str:
+    """Keep Pandoc citations, drop the verification quote, let citeproc format.
+
+    `check` needs the quoted evidence; Pandoc's citation parser cannot read it.
+    The page locator is preserved because Pandoc understands `[@key, p. 12]`.
+    """
+    rendered = text
+    for citation in reversed(parse_citations(text)):
+        if citation.error:
+            continue
+        body = f", {citation.locator()}" if citation.locator() else ""
+        replacement = f"[@{citation.key}{body}]"
+        rendered = rendered[: citation.start] + replacement + rendered[citation.end :]
+    return rendered
 
 
 REFERENCES_HEADING_RE = re.compile(r"^#{1,6}\s+References\s*$", re.IGNORECASE | re.MULTILINE)

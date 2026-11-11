@@ -13,6 +13,7 @@ from .check import run_check
 from .convert import run_convert
 from .doctor import run_doctor
 from .errors import Finding, PaperchainError
+from .import_cmd import run_import
 from .init_cmd import run_init
 from .locking import run_lock, run_unlock
 from .project import Project
@@ -86,6 +87,21 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
         if not result["git"] and args.git:
             summary += " [git init failed]"
         return _envelope(command, True, summary, data=result["data"])
+
+    if command == "import":
+        project = _project(args)
+        result = run_import(project, source=args.source, force=args.force)
+        summary = (
+            f"imported {result['source']} into {result['paper']} "
+            f"({result['words']} words); the original was not modified"
+        )
+        return _envelope(
+            command,
+            True,
+            summary,
+            warnings=result["warnings"],
+            data={key: value for key, value in result.items() if key != "warnings"},
+        )
 
     if command == "convert":
         project = _project(args)
@@ -239,6 +255,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_init.add_argument("--force", action="store_true", help="write over an existing folder")
     p_init.add_argument("--git", action="store_true", help="run git init in the new project")
+
+    p_import = sub.add_parser(
+        "import",
+        parents=[common],
+        help="copy the original manuscript into Paper/paper.md without editing it",
+        description="Convert the project's original DOCX/PDF manuscript to editable Markdown. The original is only read.",
+    )
+    p_import.add_argument(
+        "source",
+        nargs="?",
+        help="manuscript file (default: the one in the project root or Manuscript/)",
+    )
+    p_import.add_argument(
+        "--force",
+        action="store_true",
+        help="replace an existing Paper/paper.md",
+    )
 
     p_convert = sub.add_parser(
         "convert",

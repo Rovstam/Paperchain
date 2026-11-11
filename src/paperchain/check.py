@@ -10,6 +10,7 @@ from pathlib import Path
 from .citations import find_unrecognized, parse_citations, scan_markdown
 from .errors import Finding, PaperchainError
 from .extract import SUPPORTED_SUFFIXES, Extraction, extract, render_text_file
+from .library import bibliography_keys
 from .project import Project
 from .util import normalize_for_match, sha256_file, word_count
 
@@ -150,6 +151,37 @@ def run_check(
                 Finding("paper_empty", "Paper/paper.md is empty", file="Paper/paper.md")
             )
         stats["words"] = word_count(text)
+
+    # -- the original manuscript -----------------------------------------
+    # The manuscript is never converted in place or locked. Import records its
+    # hash so a replacement is visible instead of silently leaving paper.md stale.
+    manuscript = project.manifest.manuscript_path
+    if manuscript:
+        manuscript_path = project.root / manuscript
+        if not manuscript_path.is_file():
+            report.errors.append(
+                Finding(
+                    "manuscript_missing",
+                    f"the original manuscript is missing: {manuscript}",
+                    file=manuscript,
+                    hint="restore it, or run `paperchain import` to register a new one",
+                )
+            )
+        elif project.manifest.manuscript_sha256:
+            actual = sha256_file(manuscript_path)
+            if actual != project.manifest.manuscript_sha256:
+                report.errors.append(
+                    Finding(
+                        "manuscript_hash_mismatch",
+                        f"{manuscript} changed after it was imported",
+                        file=manuscript,
+                        data={
+                            "expected": project.manifest.manuscript_sha256,
+                            "actual": actual,
+                        },
+                        hint="re-run `paperchain import --force` to regenerate Paper/paper.md, then review it",
+                    )
+                )
 
     # -- sources and their hashes ---------------------------------------
     cache = _TextCache(project)
@@ -298,12 +330,10 @@ def run_check(
                         )
                     )
 
-    # -- files sitting in originals but not in the manifest --------------
-    if project.originals_dir.is_dir():
+    # -- reference files that are not in the manifest ---------------------
+    if project.references_dir.is_dir():
         managed = {(project.root / source.path).resolve() for source in manifest.sources}
-        for path in sorted(project.originals_dir.iterdir()):
-            if not path.is_file() or path.name.startswith("."):
-                continue
+        for path in project.iter_reference_files():
             if path.suffix.lower() not in SUPPORTED_SUFFIXES:
                 report.warnings.append(
                     Finding(
@@ -311,14 +341,14 @@ def run_check(
                         f"{path.name} is not a supported reference type",
                         severity="warning",
                         file=project.relative(path),
-                        hint="supported types are PDF, DOCX, TXT and MD",
+                        hint="supported types are PDF, DOCX, TXT and MD; remove or convert the file",
                     )
                 )
             elif path.resolve() not in managed:
                 report.errors.append(
                     Finding(
                         "unmanaged_source",
-                        f"{path.name} is in References/originals but was never converted",
+                        f"{path.name} is under References/ but was never converted",
                         file=project.relative(path),
                         hint="run `paperchain convert`, then `paperchain lock`",
                     )
@@ -342,6 +372,21 @@ def run_check(
     citations = parse_citations(text)
     stats["citations"] = len(citations)
     cited_keys: set[str] = set()
+
+    bibliography = project.bibliography_path
+    bibliography_key_set: set[str] | None = None
+    if bibliography is not None:
+        try:
+            bibliography_key_set = bibliography_keys(bibliography)
+        except PaperchainError as exc:
+            report.errors.append(
+                Finding(
+                    exc.code,
+                    exc.message,
+                    file=project.relative(bibliography),
+                    hint=exc.hint,
+                )
+            )
 
     for snippet, line in find_unrecognized(masked_text, citations):
         report.errors.append(
@@ -389,7 +434,22 @@ def run_check(
                     file="Paper/paper.md",
                     line=citation.line,
                     data={"key": citation.key},
-                    hint=f"add it to References/originals and run `paperchain convert`, or use one of: {', '.join(manifest.source_keys) or '(none)'}",
+                    hint=f"add it under References/ and run `paperchain convert`, or use one of: {', '.join(manifest.source_keys) or '(none)'}",
+                )
+            )
+            report.citations.append(record)
+            continue
+
+        if bibliography_key_set is not None and citation.key not in bibliography_key_set:
+            record["ok"] = False
+            report.errors.append(
+                Finding(
+                    "citation_not_in_bibliography",
+                    f"{citation.key} is not in {project.relative(bibliography)}",
+                    file="Paper/paper.md",
+                    line=citation.line,
+                    data={"key": citation.key},
+                    hint="add the reference in Zotero and export CSL JSON again, or fix the citation key",
                 )
             )
             report.citations.append(record)
@@ -547,7 +607,7 @@ def run_check(
                     f"{path.name} is a proposed source that was never added",
                     severity="warning",
                     file=project.relative(path),
-                    hint="the human must approve it: download into References/originals, then convert and lock",
+                    hint="the human must approve it: download into References/, then convert and lock",
                 )
             )
 

@@ -2,18 +2,17 @@
 
 **Write papers with an AI agent that can only use the sources you gave it.**
 
-`paperchain` is a small Python CLI plus a set of agent rules. You drop PDFs and Word files into `References/originals/`. The tool converts them to page-marked text, hashes them, and makes them read-only. The agent drafts `Paper/paper.md` with citations that name a source and a page. `paperchain check` then proves that every citation resolves and every quoted span actually occurs on the cited page. `paperchain build` turns the Markdown into a `.docx`.
+`paperchain` is a small Python CLI plus a set of agent rules. You create one folder per project, put the original manuscript in it, and put reference PDFs and Word files under `References/` in whatever subfolders you like. The tool imports the manuscript to Markdown without touching the original, converts the references to page-marked text, hashes them, and makes them read-only. The agent edits `Paper/paper.md` with citations that name a source and a page. `paperchain check` then proves that every citation resolves and every quoted span actually occurs on the cited page. `paperchain build` turns the Markdown into a `.docx`.
 
 The point is not to make the agent smarter. It is to make its output cheap to audit.
 
 ```
-References/originals/*.pdf ──convert──> References/_text/*.txt (+ page map)
-                                              │
-                                     agent writes Paper/paper.md
-                                              │
-                                    check: keys, pages, quotes
-                                              │
-                                     build: Output/*.docx
+Manuscript/original.docx ──import (read-only)──> Paper/paper.md
+References/*/ref.pdf ──────convert────────────> References/_text/*.txt (+ page map)
+                                                        │
+                                               check: keys, pages, quotes
+                                                        │
+                                               build: Output/*.docx
 ```
 
 ## What `check` can and cannot prove
@@ -21,6 +20,7 @@ References/originals/*.pdf ──convert──> References/_text/*.txt (+ page m
 It can prove that:
 
 - the reference files are byte-for-byte the ones you locked;
+- the original manuscript is byte-for-byte the one that was imported;
 - every citation key exists;
 - the cited page exists;
 - a quoted span appears on that page, after normalising whitespace, ligatures and line-break hyphenation.
@@ -31,7 +31,7 @@ The real safeguard is `paperchain check`, not the permission files. Permissions 
 
 ## Install
 
-Requires Python 3.10+ and [pandoc](https://pandoc.org/installing.html) (pandoc is only needed for `build`).
+Requires Python 3.10+ and [pandoc](https://pandoc.org/installing.html) (pandoc is needed for DOCX import, `build`, and citeproc; PDF/TXT import and `check` do not need it).
 
 <details>
 <summary><strong>Windows</strong></summary>
@@ -81,28 +81,36 @@ Until the first PyPI release, install from a clone. After that, `pipx install pa
 ## Five-minute demo
 
 ```bash
-paperchain init my-paper --title "My Paper" --agent opencode
-cd my-paper
-# put real PDFs, DOCX, TXT or MD files in References/originals/
-paperchain convert
-paperchain lock
+paperchain init "My Paper" --title "My Paper" --agent opencode
+cd "My Paper"
+# put the original manuscript in Manuscript/ (or the project root)
+# put reference PDFs/DOCX in References/, in subfolders such as References/diabetes/
+paperchain import        # original DOCX/PDF -> Paper/paper.md; original untouched
+paperchain convert       # references -> page-marked text
+paperchain lock          # hash the references and make them read-only
 paperchain check
 paperchain build
 ```
 
-`init` creates the folder layout, `AGENTS.md`, `paper.toml` and the OpenCode agent files. Open the folder in OpenCode and the `writer` agent is selected by default.
+`init` creates the project folder, the layout, `AGENTS.md`, `paper.toml` and the OpenCode agent files. Open the folder in OpenCode and the `writer` agent is selected by default.
 
-`convert` and `lock` are yours to run. The agent is not allowed to lock or unlock.
+`import`, `convert` and `lock` are yours to run. The agent is not allowed to import, convert, lock or unlock. If the original manuscript changes, `check` reports `manuscript_hash_mismatch`; re-run `paperchain import --force`, review the Markdown, and continue.
 
 ## Layout of a paper project
 
 ```
 my-paper/
 ├── AGENTS.md              the rules, read by every agent
-├── paper.toml             sources, hashes, build settings
+├── paper.toml             sources, hashes, manuscript and build settings
+├── Manuscript/
+│   └── original.docx      the original manuscript; never edited or locked
 ├── References/
-│   ├── originals/         the PDFs and Word files you supplied (gitignored)
-│   └── _text/             page-marked text + page map (gitignored)
+│   ├── diabetes/          any subfolders you like
+│   │   ├── study.pdf
+│   │   └── review.docx
+│   ├── library.json       optional CSL JSON export from Zotero
+│   ├── originals/         legacy/default drop folder; subfolders work here too
+│   └── _text/             generated page-marked text + page maps (gitignored)
 ├── Candidates/            sources an agent proposes; not citable
 ├── Paper/paper.md         the only file the writer edits
 ├── Output/                generated .docx (gitignored)
@@ -110,7 +118,9 @@ my-paper/
 └── .opencode/agents/      writer and scout
 ```
 
-`References/originals/` and `References/_text/` are ignored by git on purpose: they are copies of other people's work. Keep paper projects in **private** repositories.
+The original manuscript and the reference files are ignored by git on purpose: they are copies of other people's work. Keep paper projects in **private** repositories.
+
+Reference types: PDF and DOCX are the intended formats. TXT and MD are still accepted because the existing converter supports them. Anything else is ignored with a warning. A file in `References/<folder>/name.pdf` gets the key `<folder>-name`, so two subfolders can both contain `review.pdf` without a collision.
 
 ## Citation syntax
 
@@ -121,14 +131,27 @@ my-paper/
 | `[@smith2024, pp. 12-14]` | page range |
 | `[@smith2024, p. 12: "exact words"]` | page plus quoted evidence |
 
-`check` verifies the quote against the extracted text for that page. `build` replaces the bracket with `(Smith, 2024, p. 12)` and appends a reference list for cited sources, unless `paper.md` already has a `## References` heading.
+`check` verifies the quote against the extracted text for that page. By default `build` replaces the bracket with `(Smith, 2024, p. 12)` and appends a reference list for cited sources, unless `paper.md` already has a `## References` heading.
+
+### Zotero / CSL JSON
+
+Export a CSL JSON bibliography from Zotero (or Better BibTeX) to `References/library.json`. When that file exists, `build` uses Pandoc citeproc instead of the built-in author-year renderer: titles, authors, journals, volume and DOI come from Zotero, and the citation keys must match the Better BibTeX keys. To use a specific style, add it to `paper.toml`:
+
+```toml
+[build]
+bibliography = "References/library.json"
+csl = "styles/vancouver.csl"
+```
+
+`bibliography` is optional when the file is at the default path. This produces formatted Word citations, not live Zotero fields; use the Zotero Word plugin if you need click-to-refresh fields. Only DOCX output is supported for now.
 
 ## Commands
 
 | Command | Who runs it | What it does |
 | --- | --- | --- |
-| `paperchain init` | human | create a project from the template |
-| `paperchain convert` | human or agent | extract page-marked text from references |
+| `paperchain init` | human | create a project folder from the template |
+| `paperchain import` | human | copy the original manuscript to `Paper/paper.md` without editing the original |
+| `paperchain convert` | human or agent | extract page-marked text from references (recursively) |
 | `paperchain lock` | human | record hashes, refuse to bless changes without `--accept-changes`, make references read-only |
 | `paperchain unlock` | human | make references writable again |
 | `paperchain check` | agent | verify hashes, keys, pages, quotes |

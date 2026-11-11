@@ -1,5 +1,6 @@
 # {{title}}
 
+<!-- paperchain:template -->
 <!--
 Draft in this file. `{{program}} build` writes Output/{{slug}}.docx; it never edits this file.
 

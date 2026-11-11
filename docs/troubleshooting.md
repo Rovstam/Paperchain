@@ -20,17 +20,34 @@ Every error has a stable code in the JSON output. Use the code, not the prose, w
 | --- | --- |
 | `project_not_found` | No `paper.toml` in this folder or a parent. Pass `--project DIR` or run `paperchain init`. |
 | `manifest_missing` | `paper.toml` was deleted. Restore it; the hashes cannot be rebuilt without it. |
-| `manifest_invalid` | TOML is malformed, a key is not a lowercase slug, a key is duplicated, or a `path` is absolute or resolves outside `References/originals/`. |
+| `manifest_invalid` | TOML is malformed, a key is not a lowercase slug, a key is duplicated, or a `path` is absolute or resolves outside `References/`. |
 | `manifest_version` | The project was written by a newer paperchain. Upgrade the tool. |
 | `already_initialized` | `init` found a `paper.toml`. Use `--force` only if you mean to overwrite template files. |
 | `destination_not_empty` | Choose an empty folder, or pass `--force`. |
 | `unknown_adapter` | `init --agent X` where X does not exist. `paperchain init --help` lists the default; the adapters live inside the package. |
 
+## Manuscript import
+
+| Code | Meaning |
+| --- | --- |
+| `manuscript_missing` | No DOCX/PDF found in the project root or `Manuscript/`. Put one there, or pass its path. |
+| `manuscript_ambiguous` | More than one possible manuscript was found. Keep one, or pass the exact path. |
+| `manuscript_outside_project` | The original must stay inside the project so its hash can be checked later. |
+| `paper_exists` | `Paper/paper.md` already has your edits. Edit it directly, or pass `--force` to replace it from the original. |
+| `manuscript_hash_mismatch` | The original changed after import. Re-run `paperchain import --force`, then review the Markdown before building. |
+| `pandoc_missing` | DOCX import needs Pandoc. Install it, or export the manuscript as PDF/TXT for a plain-text import. |
+| `unsupported_manuscript` | Only DOCX, PDF, MD and TXT manuscripts are imported. |
+| `manuscript_empty` | The imported file has no text. A scanned PDF needs OCR first. |
+| `import_failed` | Pandoc could not read the DOCX. Re-export it and try again. |
+| `pdf_import_plain_text` (warning) | A PDF manuscript is imported as plain paragraphs; headings and images are not reconstructed. |
+| `bibliography_missing` / `bibliography_invalid` | `References/library.json` is absent or not CSL JSON. Export it again from Zotero. |
+| `citation_not_in_bibliography` | A citation key is not in the CSL JSON. Add the item in Zotero, export again, or fix the key. |
+
 ## References and conversion
 
 | Code | Meaning |
 | --- | --- |
-| `no_references` | `References/originals/` is missing. Create it and add files. |
+| `no_references` | `References/` is missing. Create it and add files, in subfolders if you like. |
 | `unsupported_type` | Only PDF, DOCX, TXT and MD are read. Convert other formats first. |
 | `pdf_encrypted` | Export an unlocked copy. |
 | `pdf_no_text` | The PDF is a scan. Run OCR first: `ocrmypdf in.pdf out.pdf`, then convert. |
@@ -40,9 +57,9 @@ Every error has a stable code in the JSON output. Use the code, not the prose, w
 | `docx_hidden_text_skipped` (warning) | Runs marked hidden were skipped. A reader cannot see them, so they are not citable. |
 | `docx_textbox_skipped` (warning) | Text inside text boxes was skipped. Move it into the body to cite it. |
 | `docx_too_large` | The compressed document expands past the 32 MB XML limit. Export a text-only copy. |
-| `source_outside_project` | A file in `originals/` is a link to a target outside the folder. Copy the file in instead. |
+| `source_outside_project` | A file under `References/` is a link to a target outside the folder. Copy the file in instead. |
 | `source_unreadable` | A path could not be resolved, usually a broken link. |
-| `key_collision` | Two files map to the same key. Rename one, for example `study-2024.pdf` and `study-2024-supplement.pdf`. |
+| `key_collision` | Two files map to the same key. Rename one, for example `study-2024.pdf` and `study-2024-supplement.pdf`. Files in different subfolders normally avoid this because the folder becomes a key prefix. |
 | `unknown_source` | `convert --only KEY` and no file has that key. |
 | `project_locked` | The reference set is locked. Run `paperchain unlock`, convert, then `paperchain lock`. |
 | `lock_failed` | A source is missing or was never converted. Run `convert` first. |
@@ -60,7 +77,7 @@ Every error has a stable code in the JSON output. Use the code, not the prose, w
 | `text_missing` / `text_invalid` | Conversion output is missing or corrupt. Run `convert --force`. |
 | `text_file_missing` | The `.txt` the agent reads is missing. Run `convert --force`. |
 | `text_file_mismatch` | The `.txt` no longer matches the hashed page map, so the writer may be reading edited text. Run `convert --force`; do not hand-edit the `.txt`. |
-| `unmanaged_source` | A file appeared in `originals/` without `convert`. Run `convert`, then `lock`. |
+| `unmanaged_source` | A file appeared under `References/` without `convert`. Run `convert`, then `lock`. |
 | `references_not_locked` (warning) | Run `paperchain lock` once the sources are final. |
 | `lock_drift` (warning) | Files became writable again. Run `lock`. |
 | `lock_changes` | `lock` found a reference or its converted text changed since the last lock. Inspect the change, then re-run with `--accept-changes` if it is intended. |

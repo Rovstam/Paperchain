@@ -114,6 +114,11 @@ class Manifest:
     locked_at: str = ""
     build_output: str = ""
     reference_doc: str = ""
+    bibliography: str = ""
+    csl: str = ""
+    manuscript_path: str = ""
+    manuscript_sha256: str = ""
+    manuscript_imported_at: str = ""
     require_quotes: bool = False
     sources: list[Source] = field(default_factory=list)
     schema_version: int = SCHEMA_VERSION
@@ -149,6 +154,7 @@ class Manifest:
 
         build = data.get("build", {}) or {}
         check = data.get("check", {}) or {}
+        manuscript = data.get("manuscript", {}) or {}
         raw_sources = data.get("sources", []) or []
         if not isinstance(raw_sources, list) or not all(isinstance(s, dict) for s in raw_sources):
             raise PaperchainError("manifest_invalid", "[[sources]] must be a list of tables")
@@ -160,6 +166,11 @@ class Manifest:
             locked_at=str(data.get("locked_at", "") or ""),
             build_output=str(build.get("output", "") or ""),
             reference_doc=str(build.get("reference_doc", "") or ""),
+            bibliography=str(build.get("bibliography", "") or ""),
+            csl=str(build.get("csl", "") or ""),
+            manuscript_path=str(manuscript.get("path", "") or ""),
+            manuscript_sha256=str(manuscript.get("sha256", "") or ""),
+            manuscript_imported_at=str(manuscript.get("imported_at", "") or ""),
             require_quotes=bool(check.get("require_quotes", False)),
             sources=[Source.from_dict(item) for item in raw_sources],
             schema_version=version,
@@ -178,12 +189,25 @@ class Manifest:
         if self.locked_at:
             lines.append(f"locked_at = {toml_string(self.locked_at)}")
 
-        if self.build_output or self.reference_doc:
+        if self.build_output or self.reference_doc or self.bibliography or self.csl:
             lines += ["", "[build]"]
             if self.build_output:
                 lines.append(f"output = {toml_string(self.build_output)}")
             if self.reference_doc:
                 lines.append(f"reference_doc = {toml_string(self.reference_doc)}")
+            if self.bibliography:
+                lines.append(f"bibliography = {toml_string(self.bibliography)}")
+            if self.csl:
+                lines.append(f"csl = {toml_string(self.csl)}")
+
+        if self.manuscript_path or self.manuscript_sha256 or self.manuscript_imported_at:
+            lines += ["", "[manuscript]"]
+            if self.manuscript_path:
+                lines.append(f"path = {toml_string(self.manuscript_path)}")
+            if self.manuscript_sha256:
+                lines.append(f"sha256 = {toml_string(self.manuscript_sha256)}")
+            if self.manuscript_imported_at:
+                lines.append(f"imported_at = {toml_string(self.manuscript_imported_at)}")
 
         if self.require_quotes:
             lines += ["", "[check]", "require_quotes = true"]

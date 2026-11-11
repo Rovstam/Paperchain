@@ -12,22 +12,18 @@ from .extract import (
 )
 from .manifest import Source
 from .project import Project
-from .util import now_iso, rel_posix, sha256_file, slugify
+from .util import now_iso, rel_posix, sha256_file
 
 
-def _scan_originals(project: Project) -> list[Path]:
-    if not project.originals_dir.is_dir():
+def _scan_references(project: Project) -> list[Path]:
+    if not project.references_dir.is_dir():
         raise PaperchainError(
             "no_references",
-            "References/originals does not exist",
-            hint="create it and put your PDF, DOCX, TXT or MD sources inside",
+            "References/ does not exist",
+            hint="create it and put your PDF or DOCX references inside, in as many subfolders as you like",
         )
-    files = sorted(
-        path
-        for path in project.originals_dir.iterdir()
-        if path.is_file() and not path.name.startswith(".")
-    )
-    allowed = project.originals_dir.resolve()
+    files = project.iter_reference_files()
+    allowed = project.references_dir.resolve()
     for path in files:
         try:
             resolved = path.resolve()
@@ -39,7 +35,7 @@ def _scan_originals(project: Project) -> list[Path]:
         if not resolved.is_relative_to(allowed):
             raise PaperchainError(
                 "source_outside_project",
-                f"{path.name} links to a file outside References/originals",
+                f"{path.name} links to a file outside References/",
                 hint="copy the file into the folder instead of linking to it",
             )
     return files
@@ -59,7 +55,7 @@ def run_convert(
             hint="run `paperchain unlock`, convert, then `paperchain lock`",
         )
 
-    files = _scan_originals(project)
+    files = _scan_references(project)
     supported = [path for path in files if path.suffix.lower() in SUPPORTED_SUFFIXES]
     unsupported = [path for path in files if path.suffix.lower() not in SUPPORTED_SUFFIXES]
 
@@ -69,7 +65,7 @@ def run_convert(
             f"{path.name} is not a supported reference type",
             severity="warning",
             file=project.relative(path),
-            hint="supported types are PDF, DOCX, TXT and MD",
+            hint="supported types are PDF, DOCX, TXT and MD; other files are ignored",
         )
         for path in unsupported
     ]
@@ -78,7 +74,7 @@ def run_convert(
     keyed: dict[str, Path] = {}
     collisions: list[str] = []
     for path in supported:
-        key = slugify(path.stem)
+        key = project.reference_key(path)
         if key in keyed:
             collisions.append(f"{keyed[key].name} and {path.name} both map to key {key!r}")
             continue

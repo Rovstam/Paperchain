@@ -43,7 +43,8 @@ pipx upgrade paperchain
 ```bash
 paperchain init ~/papers/my-paper --title "My Paper" --agent opencode
 cd ~/papers/my-paper
-# copy PDFs or Word files into References/originals/
+# put the original manuscript in Manuscript/, and reference PDFs/DOCX in References/ (subfolders allowed)
+paperchain import
 paperchain convert
 paperchain lock
 paperchain check

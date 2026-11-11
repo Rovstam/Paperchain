@@ -3,6 +3,16 @@ References/originals/*
 !References/originals/.gitkeep
 References/_text/*
 !References/_text/.gitkeep
+References/**/*.pdf
+References/**/*.docx
+References/**/*.txt
+References/**/*.md
+
+# The original manuscript is private too.
+Manuscript/*
+!Manuscript/.gitkeep
+/*.docx
+/*.pdf
 
 # Generated documents
 Output/*
