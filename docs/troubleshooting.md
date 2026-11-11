@@ -20,7 +20,7 @@ Every error has a stable code in the JSON output. Use the code, not the prose, w
 | --- | --- |
 | `project_not_found` | No `paper.toml` in this folder or a parent. Pass `--project DIR` or run `paperchain init`. |
 | `manifest_missing` | `paper.toml` was deleted. Restore it; the hashes cannot be rebuilt without it. |
-| `manifest_invalid` | TOML is malformed. Usually an unquoted string or a bracket. |
+| `manifest_invalid` | TOML is malformed, a key is not a lowercase slug, a key is duplicated, or a `path` is absolute or resolves outside `References/originals/`. |
 | `manifest_version` | The project was written by a newer paperchain. Upgrade the tool. |
 | `already_initialized` | `init` found a `paper.toml`. Use `--force` only if you mean to overwrite template files. |
 | `destination_not_empty` | Choose an empty folder, or pass `--force`. |
@@ -37,6 +37,11 @@ Every error has a stable code in the JSON output. Use the code, not the prose, w
 | `pdf_blank_pages` (warning) | Some pages have no text. Quotes from those pages cannot be verified. |
 | `docx_unreadable` | Not a real `.docx`, or a corrupt zip. Re-export it. |
 | `docx_footnotes_ignored` (warning) | Footnotes are not extracted in this version. Move needed text into the body. |
+| `docx_hidden_text_skipped` (warning) | Runs marked hidden were skipped. A reader cannot see them, so they are not citable. |
+| `docx_textbox_skipped` (warning) | Text inside text boxes was skipped. Move it into the body to cite it. |
+| `docx_too_large` | The compressed document expands past the 32 MB XML limit. Export a text-only copy. |
+| `source_outside_project` | A file in `originals/` is a link to a target outside the folder. Copy the file in instead. |
+| `source_unreadable` | A path could not be resolved, usually a broken link. |
 | `key_collision` | Two files map to the same key. Rename one, for example `study-2024.pdf` and `study-2024-supplement.pdf`. |
 | `unknown_source` | `convert --only KEY` and no file has that key. |
 | `project_locked` | The reference set is locked. Run `paperchain unlock`, convert, then `paperchain lock`. |
@@ -50,12 +55,15 @@ Every error has a stable code in the JSON output. Use the code, not the prose, w
 | --- | --- |
 | `source_hash_mismatch` | An original changed after locking. Restore the file from backup; do not simply relock, because the old quotes were verified against the old bytes. |
 | `text_hash_mismatch` | `References/_text/*.json` was edited after conversion. Regenerate: unlock, `convert --force`, lock. |
+| `text_stale` | The converted JSON was built from a different version of the original than the one on disk, or a fresh extraction disagrees with it. Run `convert --force`; a relock must not bless stale text. Use `check --reextract` to catch a page map that was edited along with the manifest. |
+| `source_unhashed` / `text_unhashed` | The manifest has no hash for this source. Always an error: an unhashed reference cannot be verified. Run `convert`, or restore `paper.toml`. |
 | `text_missing` / `text_invalid` | Conversion output is missing or corrupt. Run `convert --force`. |
-| `text_file_missing` (warning) | The `.txt` the agent reads is missing. Run `convert --force`. |
-| `text_inconsistent` (warning) | The `.txt` and `.json` copies disagree. Regenerate both. |
+| `text_file_missing` | The `.txt` the agent reads is missing. Run `convert --force`. |
+| `text_file_mismatch` | The `.txt` no longer matches the hashed page map, so the writer may be reading edited text. Run `convert --force`; do not hand-edit the `.txt`. |
 | `unmanaged_source` | A file appeared in `originals/` without `convert`. Run `convert`, then `lock`. |
 | `references_not_locked` (warning) | Run `paperchain lock` once the sources are final. |
 | `lock_drift` (warning) | Files became writable again. Run `lock`. |
+| `lock_changes` | `lock` found a reference or its converted text changed since the last lock. Inspect the change, then re-run with `--accept-changes` if it is intended. |
 
 ## Citations and quotes
 
@@ -65,11 +73,14 @@ Every error has a stable code in the JSON output. Use the code, not the prose, w
 | `page_out_of_range` | The source has fewer pages than the citation claims. |
 | `quote_not_found` | The quoted words are not anywhere in the source. Usually a copy error, or an extraction problem. |
 | `quote_wrong_page` | The quote exists, on a different page. The error names the page. |
-| `quote_too_short` (warning) | Fewer than four words. Quote a full clause. |
+| `quote_too_short` (warning) | Fewer than four words. Quote a full clause. This becomes an error under `--strict` or `[check] require_quotes = true`. |
 | `citation_without_quote` (warning) | The citation has a page but no evidence. `--strict` makes this an error. |
 | `citation_without_page` (warning) | The citation has no page. Add one for factual claims. |
 | `citation_malformed` | The bracket does not match the syntax. See `AGENTS.md`. |
+| `citation_unrecognized` | Something looks like a citation but is not the supported form: `[see @key]`, `[-@key]`, a bare `@key`, or a bracketed `@@key`. It is an error rather than ignored, because otherwise the citation escapes verification. |
 | `multiple_citations` | One citation per bracket: `[@a, p. 1] [@b, p. 2]`. |
+| `unterminated_comment` | An HTML comment is never closed, so everything after it is invisible to `check`. Close it. |
+| `unterminated_code_block` | A fenced code block is never closed. Close it; a fence indented four or more spaces is not a fence. |
 | `placeholder` | `TODO`, `TKTK`, `FIXME`, `XXX`, `[[` or `lorem ipsum` is still in the draft. |
 | `unused_source` (warning) | A converted source is never cited. |
 | `candidate_pending` (warning) | A proposal in `Candidates/` was never approved or deleted. |
@@ -94,6 +105,7 @@ If extraction is unusable, quote a shorter span that did extract cleanly, or ask
 | `pandoc_failed` | Pandoc rejected the markdown. The hint contains its stderr. Run the same command by hand in `Paper/` to see the full message. |
 | `reference_doc_missing` | `[build] reference_doc` points at a file that does not exist. Fix the path or remove the line. |
 | `build_no_output` | Pandoc reported success but wrote nothing. Check disk space and antivirus. |
+| `invalid_output` | `[build] output` points outside `Output/`. Use a relative path such as `Output/paper.docx`. |
 | `paper_missing` / `paper_empty` | `Paper/paper.md` does not exist or is empty. |
 
 ## Still stuck

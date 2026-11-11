@@ -9,3 +9,6 @@ build/
 htmlcov/
 .DS_Store
 Thumbs.db
+
+# Release and audit archives
+*.zip

@@ -1,6 +1,6 @@
 """paperchain: source-grounded paper writing for AI agents."""
 
-__version__ = "0.1.0"
+__version__ = "0.1.2"
 
 # The command name shown in generated files and messages. Kept in one place so a
 # rename is a small, mechanical change rather than a hunt through the codebase.

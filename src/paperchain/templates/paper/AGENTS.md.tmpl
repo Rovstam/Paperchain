@@ -46,6 +46,8 @@ The quoted form is the strongest. `check` proves that the quote appears on that 
 
 One citation per bracket. Write `[@a, p. 1] [@b, p. 2]`, never `[@a; @b]`.
 
+These are the only accepted forms. `[see @key]`, `[-@key]` and a bare `@key` are errors, not citations: `check` refuses to guess, because a citation it does not parse is a citation it cannot verify.
+
 The quote is evidence, not text. It is removed from the built document; the citation remains as `(Author, Year, p. 12)`.
 
 ## When a source is missing
@@ -73,8 +75,8 @@ A candidate is not a source. You cannot cite it.
 
 ## Tools
 
-Allowed: `{{program}} doctor`, `{{program}} convert`, `{{program}} check`, `{{program}} build`, `{{program}} lock`, `git status`, `git diff`.
+Allowed: `{{program}} doctor`, `{{program}} check`, `{{program}} build`, `git status`, `git diff`.
 
-Not allowed: `{{program}} unlock`, `{{program}} init`, editing any `.docx`, deleting files, installing packages, or changing `paper.toml`.
+Not allowed: `{{program}} convert`, `{{program}} lock`, `{{program}} unlock`, `{{program}} init`, any `--force` flag, editing any `.docx`, deleting files, installing packages, or changing `paper.toml`.
 
 The `scout` subagent may search the web to propose candidates. It cannot write the paper.

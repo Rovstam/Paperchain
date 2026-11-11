@@ -129,7 +129,7 @@ my-paper/
 | --- | --- | --- |
 | `paperchain init` | human | create a project from the template |
 | `paperchain convert` | human or agent | extract page-marked text from references |
-| `paperchain lock` | human | record hashes, make references read-only |
+| `paperchain lock` | human | record hashes, refuse to bless changes without `--accept-changes`, make references read-only |
 | `paperchain unlock` | human | make references writable again |
 | `paperchain check` | agent | verify hashes, keys, pages, quotes |
 | `paperchain build` | agent | check, then build `Output/*.docx` |

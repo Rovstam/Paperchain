@@ -27,6 +27,26 @@ def toml_string(value: str) -> str:
     return f'"{out}"'
 
 
+def _int_field(data: dict[str, Any], name: str, key: str) -> int:
+    value = data.get(name, 0)
+    if value is None or value == "":
+        return 0
+    if isinstance(value, bool):
+        raise PaperchainError(
+            "manifest_invalid",
+            f"{name} for source {key!r} must be a number",
+        )
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().lstrip("+-").isdigit():
+        return int(value.strip())
+    raise PaperchainError(
+        "manifest_invalid",
+        f"{name} for source {key!r} must be a number, not {value!r}",
+        hint=f"edit {MANIFEST_NAME} by hand, or delete the entry and run `paperchain convert`",
+    )
+
+
 @dataclass
 class Source:
     key: str
@@ -63,8 +83,8 @@ class Source:
             authors=str(data.get("authors", "") or ""),
             year=year,
             sha256=str(data.get("sha256", "") or ""),
-            size=int(data.get("size", 0) or 0),
-            pages=int(data.get("pages", 0) or 0),
+            size=_int_field(data, "size", key),
+            pages=_int_field(data, "pages", key),
             text_sha256=str(data.get("text_sha256", "") or ""),
             converter=str(data.get("converter", "") or ""),
             converted_at=str(data.get("converted_at", "") or ""),

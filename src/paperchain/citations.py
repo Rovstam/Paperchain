@@ -5,14 +5,26 @@ from dataclasses import dataclass
 
 from .manifest import Source
 
-CITATION_RE = re.compile(r"\[@(?P<key>[A-Za-z0-9][A-Za-z0-9_.:/+-]*)(?P<body>[^\]]*)\]")
+CITATION_RE = re.compile(
+    r"""\[@(?P<key>[A-Za-z0-9][A-Za-z0-9_.:/+-]*)(?P<body>(?:[^\]"'“”]|"[^"]*"|“[^”]*”|'[^']*')*)\]"""
+)
 
 _LOCATOR = r"(?:pp?\.)\s*\d+(?:\s*[-\u2013\u2014]\s*\d+)?"
 _QUOTE = r'(?:"[^"]*"|\u201c[^\u201d]*\u201d|\'[^\']*\')'
 BODY_RE = re.compile(rf"^\s*,?\s*(?P<loc>{_LOCATOR})?\s*[:,-]?\s*(?P<quote>{_QUOTE})?\s*$")
 LOCATOR_RE = re.compile(r"(pp?)\.\s*(\d+)(?:\s*[-\u2013\u2014]\s*(\d+))?$")
 
+# Any @key that is not part of a parsed citation. Catches Pandoc forms such as
+# [see @key], [-@key] and narrative @key, which would otherwise pass silently.
+AT_RE = re.compile(r"(?<![\w@])@(?P<key>[^\s\]])")
+
 MAX_PAGE_SPAN = 50
+
+
+@dataclass
+class MaskIssue:
+    kind: str
+    line: int
 
 
 @dataclass
@@ -46,43 +58,164 @@ class Citation:
         return f"pp. {self.page_first}-{self.page_last}"
 
 
-def mask_code(text: str) -> str:
-    """Replace code and comments with spaces, keeping offsets and newlines."""
-    out_lines: list[str] = []
-    in_fence = False
-    in_comment = False
-    for line in text.split("\n"):
-        stripped = line.strip()
-        if in_comment:
-            end = line.find("-->")
+def _is_escaped(text: str, position: int) -> bool:
+    """True when position is preceded by an odd run of backslashes."""
+    count = 0
+    index = position - 1
+    while index >= 0 and text[index] == "\\":
+        count += 1
+        index -= 1
+    return count % 2 == 1
+
+
+def _mask_range(buffer: list[str], text: str, start: int, end: int) -> None:
+    for position in range(start, end):
+        if text[position] != "\n":
+            buffer[position] = " "
+
+
+def _find_fence_end(text: str, start: int, fence: str, run: int) -> tuple[int, int] | None:
+    """Return the (start, end) of the closing fence line, or None."""
+    position = text.find("\n", start)
+    while position != -1:
+        line_start = position + 1
+        line_end = text.find("\n", line_start)
+        if line_end == -1:
+            line_end = len(text)
+        candidate = text[line_start:line_end]
+        stripped = candidate.lstrip(" ")
+        indent = len(candidate) - len(stripped)
+        if indent <= 3:
+            count = 0
+            while count < len(stripped) and stripped[count] == fence:
+                count += 1
+            if count >= run and stripped[count:].strip() == "":
+                return line_start, line_end
+        if line_end >= len(text):
+            break
+        position = line_end
+    return None
+
+
+def _find_code_span_end(text: str, start: int, run: int) -> int | None:
+    """Index of the closing backtick run on the same line, or None."""
+    position = start
+    length = len(text)
+    while position < length:
+        char = text[position]
+        if char == "\n":
+            return None
+        if char == "`":
+            count = 0
+            cursor = position
+            while cursor < length and text[cursor] == "`":
+                count += 1
+                cursor += 1
+            if count == run:
+                return position
+            position = cursor
+            continue
+        position += 1
+    return None
+
+
+def scan_markdown(text: str) -> tuple[str, list[MaskIssue]]:
+    """Mask fenced code, inline code and HTML comments, preserving offsets.
+
+    The scan is left to right so that a comment opener inside a code span is
+    inert, and a code span inside a comment is inert. Unterminated constructs
+    are reported instead of silently swallowing the rest of the document.
+    """
+    buffer = list(text)
+    issues: list[MaskIssue] = []
+    length = len(text)
+    index = 0
+    line = 1
+    at_line_start = True
+
+    while index < length:
+        char = text[index]
+
+        if char == "\n":
+            line += 1
+            index += 1
+            at_line_start = True
+            continue
+
+        if at_line_start:
+            cursor = index
+            indent = 0
+            while cursor < length and text[cursor] == " " and indent < 4:
+                cursor += 1
+                indent += 1
+            if indent <= 3 and cursor < length and text[cursor] in "`~":
+                fence = text[cursor]
+                run = 0
+                probe = cursor
+                while probe < length and text[probe] == fence:
+                    run += 1
+                    probe += 1
+                if run >= 3:
+                    line_end = text.find("\n", probe)
+                    if line_end == -1:
+                        line_end = length
+                    info = text[probe:line_end]
+                    # CommonMark: a backtick fence's info string may not contain
+                    # a backtick. "```x```" is inline code, not a fence.
+                    if not (fence == "`" and "`" in info):
+                        found = _find_fence_end(text, probe, fence, run)
+                        if found is None:
+                            end = length
+                            issues.append(MaskIssue("unterminated_code_block", line))
+                        else:
+                            end = found[1]
+                        _mask_range(buffer, text, index, end)
+                        line += text.count("\n", index, end)
+                        index = end
+                        at_line_start = False
+                        continue
+            at_line_start = False
+
+        if char == "`":
+            if _is_escaped(text, index):
+                index += 1
+                at_line_start = False
+                continue
+            run = 0
+            probe = index
+            while probe < length and text[probe] == "`":
+                run += 1
+                probe += 1
+            close = _find_code_span_end(text, probe, run)
+            if close is not None:
+                end = close + run
+                _mask_range(buffer, text, index, end)
+                line += text.count("\n", index, end)
+                index = end
+                at_line_start = False
+                continue
+
+        if text.startswith("<!--", index):
+            end = text.find("-->", index + 4)
             if end == -1:
-                out_lines.append(" " * len(line))
-                continue
-            in_comment = False
-            out_lines.append(" " * (end + 3) + line[end + 3 :])
+                issues.append(MaskIssue("unterminated_comment", line))
+                _mask_range(buffer, text, index, length)
+                index = length
+                break
+            end += 3
+            _mask_range(buffer, text, index, end)
+            line += text.count("\n", index, end)
+            index = end
+            at_line_start = False
             continue
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            in_fence = not in_fence
-            out_lines.append(" " * len(line))
-            continue
-        if in_fence:
-            out_lines.append(" " * len(line))
-            continue
-        comment_start = line.find("<!--")
-        if comment_start != -1:
-            comment_end = line.find("-->", comment_start + 4)
-            if comment_end == -1:
-                in_comment = True
-                out_lines.append(line[:comment_start] + " " * (len(line) - comment_start))
-                continue
-            masked = (
-                line[:comment_start]
-                + " " * (comment_end + 3 - comment_start)
-                + line[comment_end + 3 :]
-            )
-            line = masked
-        out_lines.append(re.sub(r"`[^`]*`", lambda m: " " * len(m.group(0)), line))
-    return "\n".join(out_lines)
+
+        index += 1
+
+    return "".join(buffer), issues
+
+
+def mask_code(text: str) -> str:
+    return scan_markdown(text)[0]
 
 
 def parse_locator(locator: str) -> tuple[int, int] | None:
@@ -100,7 +233,7 @@ def parse_citations(text: str) -> list[Citation]:
 
     for match in CITATION_RE.finditer(masked):
         start = match.start()
-        if start > 0 and masked[start - 1] == "\\":
+        if _is_escaped(masked, start):
             continue
 
         line = masked.count("\n", 0, start) + 1
@@ -114,7 +247,7 @@ def parse_citations(text: str) -> list[Citation]:
             line=line,
         )
 
-        if "@" in body:
+        if "@" in re.sub(r'"[^"]*"|“[^”]*”|\'[^\']*\'', "", body):
             citation.error = "multiple_citations"
             citation.error_detail = "one citation per bracket"
             citations.append(citation)
@@ -157,6 +290,23 @@ def parse_citations(text: str) -> list[Citation]:
         citations.append(citation)
 
     return citations
+
+
+def find_unrecognized(masked: str, citations: list[Citation]) -> list[tuple[str, int]]:
+    """Find @key mentions that no strict citation covers."""
+    spans = [(citation.start, citation.end) for citation in citations]
+    found: list[tuple[str, int]] = []
+    for match in AT_RE.finditer(masked):
+        position = match.start()
+        if any(start <= position < end for start, end in spans):
+            continue
+        if _is_escaped(masked, position):
+            continue
+        if position >= 1 and masked[position - 1] == "[" and _is_escaped(masked, position - 1):
+            continue
+        line = masked.count("\n", 0, position) + 1
+        found.append((match.group(0), line))
+    return found
 
 
 def format_citation(citation: Citation, source: Source | None) -> str:

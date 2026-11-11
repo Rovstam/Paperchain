@@ -86,18 +86,25 @@ _QUOTE_TABLE = str.maketrans(
 )
 
 
-def normalize_for_match(text: str) -> str:
+def normalize_for_match(text: str, join_hyphenation: bool = True) -> str:
     """Normalize extracted text and quoted spans before comparing them.
 
     The normalization exists to absorb differences that are artefacts of PDF
     extraction, not differences in meaning: ligatures, smart punctuation,
     line-break hyphenation and whitespace. It never adds or removes words.
+
+    With join_hyphenation=False, a word broken as "well-\\nknown" keeps its
+    hyphen ("well-known"), so a quote that legitimately contains the compound
+    still matches.
     """
     text = unicodedata.normalize("NFKC", text)
     text = text.replace("\u00ad", "")  # soft hyphen
     text = text.translate(_QUOTE_TABLE)
-    # Join words split across a line by a hyphen, e.g. "exam-\nple".
-    text = re.sub(r"(\w)-\s*\n\s*(\w)", r"\1\2", text)
+    if join_hyphenation:
+        # Join words split across a line by a hyphen, e.g. "exam-\nple".
+        text = re.sub(r"(\w)-\s*\n\s*(\w)", r"\1\2", text)
+    else:
+        text = re.sub(r"(\w)-\s*\n\s*(\w)", r"\1-\2", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip().casefold()
 

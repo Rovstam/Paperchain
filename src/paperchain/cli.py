@@ -22,6 +22,14 @@ EXIT_FINDINGS = 1
 EXIT_CANNOT_RUN = 2
 
 
+class _Parser(argparse.ArgumentParser):
+    """ArgumentParser that never accepts abbreviated long options."""
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("allow_abbrev", False)
+        super().__init__(*args, **kwargs)
+
+
 def _project(args: argparse.Namespace) -> Project:
     path = getattr(args, "project", None)
     return Project.open(Path(path) if path else None)
@@ -97,8 +105,10 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
 
     if command == "lock":
         project = _project(args)
-        result = run_lock(project)
+        result = run_lock(project, accept_changes=args.accept_changes)
         summary = f"locked {result['sources']} source(s); references are now read-only"
+        if result["changes"]:
+            summary += f" (accepted {len(result['changes'])} change(s))"
         return _envelope(command, True, summary, data=result["data"])
 
     if command == "unlock":
@@ -109,7 +119,7 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
 
     if command == "check":
         project = _project(args)
-        report = run_check(project, strict=args.strict)
+        report = run_check(project, strict=args.strict, reextract=args.reextract)
         stats = report.stats
         summary = (
             f"{len(report.errors)} error(s), {len(report.warnings)} warning(s) - "
@@ -179,7 +189,7 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _Parser(
         prog=PROGRAM,
         description="Source-grounded paper writing for AI agents.",
         epilog="Every command accepts --json for machine-readable output.",
@@ -210,7 +220,9 @@ def build_parser() -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,
     )
 
-    sub = parser.add_subparsers(dest="command", required=True, metavar="command")
+    sub = parser.add_subparsers(
+        dest="command", required=True, metavar="command", parser_class=_Parser
+    )
 
     p_init = sub.add_parser(
         "init",
@@ -237,10 +249,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_convert.add_argument("--only", metavar="KEY", help="convert one source by key")
     p_convert.add_argument("--prune", action="store_true", help="drop sources whose files are gone")
 
-    sub.add_parser(
+    p_lock = sub.add_parser(
         "lock",
         parents=[common],
         help="freeze hashes and make references read-only",
+    )
+    p_lock.add_argument(
+        "--accept-changes",
+        action="store_true",
+        help="accept references that changed since the last lock",
     )
     sub.add_parser(
         "unlock",
@@ -257,6 +274,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--strict",
         action="store_true",
         help="require quoted evidence for every citation",
+    )
+    p_check.add_argument(
+        "--reextract",
+        action="store_true",
+        help="re-extract every original and compare it with the converted page map",
     )
 
     p_build = sub.add_parser(

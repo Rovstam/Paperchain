@@ -49,7 +49,7 @@ def pandoc_version() -> str | None:
 
 
 def run_build(project: Project, force: bool = False) -> BuildResult:
-    report = run_check(project)
+    report = run_check(project, reextract=True)
     result = BuildResult(report=report)
 
     if report.errors and not force:

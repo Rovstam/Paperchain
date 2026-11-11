@@ -22,11 +22,27 @@ def _scan_originals(project: Project) -> list[Path]:
             "References/originals does not exist",
             hint="create it and put your PDF, DOCX, TXT or MD sources inside",
         )
-    return sorted(
+    files = sorted(
         path
         for path in project.originals_dir.iterdir()
         if path.is_file() and not path.name.startswith(".")
     )
+    allowed = project.originals_dir.resolve()
+    for path in files:
+        try:
+            resolved = path.resolve()
+        except OSError as exc:
+            raise PaperchainError(
+                "source_unreadable",
+                f"cannot resolve {path.name}: {exc}",
+            ) from exc
+        if not resolved.is_relative_to(allowed):
+            raise PaperchainError(
+                "source_outside_project",
+                f"{path.name} links to a file outside References/originals",
+                hint="copy the file into the folder instead of linking to it",
+            )
+    return files
 
 
 def run_convert(

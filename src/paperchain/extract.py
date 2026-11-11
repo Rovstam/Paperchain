@@ -159,11 +159,92 @@ def _pdf_metadata(reader) -> tuple[str, str]:
     return title, authors
 
 
+MAX_DOCX_XML = 32 * 1024 * 1024
+
+
+def _local(tag: str) -> str:
+    """Local part of an XML name, so strict and transitional OOXML both work."""
+    return tag.rsplit("}", 1)[-1]
+
+
+def _attribute(element, name: str) -> str | None:
+    for key, value in element.attrib.items():
+        if _local(key) == name:
+            return value
+    return None
+
+
+def _run_is_hidden(run) -> bool:
+    for child in run:
+        if _local(child.tag) != "rPr":
+            continue
+        for prop in child:
+            if _local(prop.tag) == "vanish":
+                return _attribute(prop, "val") not in {"0", "false", "off"}
+    return False
+
+
+def _append_run_text(run, chunks: list[str]) -> None:
+    def walk(element) -> None:
+        for child in element:
+            name = _local(child.tag)
+            if name == "txbxContent":
+                continue
+            if name == "t":
+                chunks.append(child.text or "")
+            elif name == "tab":
+                chunks.append("\t")
+            elif name in {"br", "cr"}:
+                chunks.append("\n")
+            elif name == "noBreakHyphen":
+                chunks.append("-")
+            else:
+                walk(child)
+
+    walk(run)
+
+
+def _paragraph_text(paragraph) -> tuple[str, bool]:
+    chunks: list[str] = []
+    hidden = False
+
+    def walk(element) -> None:
+        nonlocal hidden
+        for child in element:
+            name = _local(child.tag)
+            if name == "txbxContent":
+                continue
+            if name == "r":
+                if _run_is_hidden(child):
+                    hidden = True
+                else:
+                    _append_run_text(child, chunks)
+                continue
+            walk(child)
+
+    walk(paragraph)
+    return "".join(chunks).strip(), hidden
+
+
 def _extract_docx(path: Path) -> Extraction:
     try:
         with zipfile.ZipFile(path) as archive:
+            names = archive.namelist()
+            if names.count("word/document.xml") != 1:
+                raise PaperchainError(
+                    "docx_unreadable",
+                    f"{path.name} has duplicate or missing document parts",
+                    hint="re-export the file as .docx; a zip with two document parts is ambiguous",
+                )
+            info = archive.getinfo("word/document.xml")
+            if info.file_size > MAX_DOCX_XML:
+                raise PaperchainError(
+                    "docx_too_large",
+                    f"{path.name} expands to {info.file_size} bytes of XML",
+                    hint="export a text-only copy; this file is too large to read safely",
+                )
             xml = archive.read("word/document.xml")
-            names = set(archive.namelist())
+            has_footnotes = "word/footnotes.xml" in names
     except (zipfile.BadZipFile, KeyError) as exc:
         raise PaperchainError(
             "docx_unreadable",
@@ -176,23 +257,29 @@ def _extract_docx(path: Path) -> Extraction:
     except ElementTree.ParseError as exc:
         raise PaperchainError("docx_unreadable", f"{path.name} has invalid XML: {exc}") from exc
 
-    body = root.find(f"{W}body")
+    body = next((child for child in root if _local(child.tag) == "body"), None)
     if body is None:
         raise PaperchainError("docx_empty", f"{path.name} has no document body")
 
     paragraphs: list[str] = []
-    for paragraph in body.iter(f"{W}p"):
-        parts: list[str] = []
-        for node in paragraph.iter():
-            if node.tag == f"{W}t" and node.text:
-                parts.append(node.text)
-            elif node.tag == f"{W}tab":
-                parts.append("\t")
-            elif node.tag in {f"{W}br", f"{W}cr"}:
-                parts.append("\n")
-        text = "".join(parts).strip()
-        if text:
-            paragraphs.append(text)
+    hidden_seen = False
+    textbox_seen = any(_local(node.tag) == "txbxContent" for node in root.iter())
+
+    def walk(element) -> None:
+        nonlocal hidden_seen
+        for child in element:
+            name = _local(child.tag)
+            if name == "txbxContent":
+                continue
+            if name == "p":
+                text, hidden = _paragraph_text(child)
+                hidden_seen = hidden_seen or hidden
+                if text:
+                    paragraphs.append(text)
+                continue
+            walk(child)
+
+    walk(body)
 
     if not paragraphs:
         raise PaperchainError(
@@ -202,7 +289,7 @@ def _extract_docx(path: Path) -> Extraction:
         )
 
     warnings: list[Finding] = []
-    if "word/footnotes.xml" in names:
+    if has_footnotes:
         warnings.append(
             Finding(
                 "docx_footnotes_ignored",
@@ -210,6 +297,26 @@ def _extract_docx(path: Path) -> Extraction:
                 severity="warning",
                 file=path.name,
                 hint="move any source text you need to cite into the body",
+            )
+        )
+    if hidden_seen:
+        warnings.append(
+            Finding(
+                "docx_hidden_text_skipped",
+                "hidden text was skipped",
+                severity="warning",
+                file=path.name,
+                hint="a reader cannot see hidden text; it is not a citable source",
+            )
+        )
+    if textbox_seen:
+        warnings.append(
+            Finding(
+                "docx_textbox_skipped",
+                "text inside text boxes was skipped",
+                severity="warning",
+                file=path.name,
+                hint="move the text into the body if you need to cite it",
             )
         )
 
@@ -225,23 +332,17 @@ def _extract_docx(path: Path) -> Extraction:
     )
 
 
-DC = "{http://purl.org/dc/elements/1.1/}"
-
-
 def _docx_metadata(path: Path) -> tuple[str, str]:
     try:
         with zipfile.ZipFile(path) as archive:
             if "docProps/core.xml" not in archive.namelist():
                 return "", ""
             root = ElementTree.fromstring(archive.read("docProps/core.xml"))
-    except (OSError, zipfile.BadZipFile, ElementTree.ParseError):
-        return ""
-    title_node = root.find(f"{DC}title")
-    author_node = root.find(f"{DC}creator")
-    return (
-        _clean_metadata(title_node.text if title_node is not None else ""),
-        _clean_metadata(author_node.text if author_node is not None else ""),
-    )
+    except (OSError, zipfile.BadZipFile, KeyError, ElementTree.ParseError):
+        return "", ""
+    title = next((node.text for node in root if _local(node.tag) == "title"), "")
+    author = next((node.text for node in root if _local(node.tag) == "creator"), "")
+    return _clean_metadata(title or ""), _clean_metadata(author or "")
 
 
 def _extract_plain(path: Path) -> Extraction:

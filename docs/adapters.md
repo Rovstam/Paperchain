@@ -56,11 +56,21 @@ Two rules matter more than the rest:
 
 ```jsonc
 { "action": "shell", "resource": "*", "effect": "deny" },
-{ "action": "shell", "resource": "paperchain *", "effect": "allow" },
-{ "action": "shell", "resource": "paperchain unlock*", "effect": "deny" },
+{ "action": "shell", "resource": "paperchain* check*", "effect": "allow" },
+{ "action": "shell", "resource": "paperchain* doctor*", "effect": "allow" },
+{ "action": "shell", "resource": "paperchain* build*", "effect": "allow" },
+{ "action": "shell", "resource": "* --force*", "effect": "deny" },
+{ "action": "shell", "resource": "* unlock*", "effect": "deny" },
+{ "action": "shell", "resource": "* convert*", "effect": "deny" },
+{ "action": "shell", "resource": "* lock*", "effect": "deny" },
+{ "action": "shell", "resource": "* init*", "effect": "deny" },
 ```
 
-Rules are evaluated in order and the last match wins. Without the final deny, `paperchain *` would also allow `paperchain unlock`, which defeats the lock. If you edit the list, keep the specific `deny` rules after the broad `allow`.
+Rules are evaluated in order and the last match wins. This is an allowlist of subcommands, not a denylist of bad ones, because a denylist is easy to sidestep: `paperchain "unlock"`, `paperchain un\lock` and `paperchain --project . unlock` do not look like `paperchain unlock` to a string match. Only commands that contain `check`, `doctor` or `build` are allowed at all.
+
+`--force` is denied after the allow, so `paperchain build --force` stops. The CLI also disables argparse abbreviations (`allow_abbrev=False`), so `--fo` is a usage error rather than a synonym for `--force`.
+
+The writer may therefore run only `doctor`, `check` and `build`. Converting, locking and unlocking are human steps, and treating them as a boundary is deliberate.
 
 The `writer` agent also denies `webfetch` and `websearch`, so it cannot quietly pull facts from outside the reference set. The `scout` subagent is the opposite: it may search, and it can only write to `Candidates/`.
 

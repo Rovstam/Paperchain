@@ -7,14 +7,13 @@ import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .citations import mask_code, parse_citations
-from .errors import Finding
-from .extract import SUPPORTED_SUFFIXES
+from .citations import find_unrecognized, parse_citations, scan_markdown
+from .errors import Finding, PaperchainError
+from .extract import SUPPORTED_SUFFIXES, Extraction, extract, render_text_file
 from .project import Project
 from .util import normalize_for_match, sha256_file, word_count
 
 PLACEHOLDER_RE = re.compile(r"\b(TODO|TKTK|FIXME|XXX)\b|\[\[|lorem ipsum", re.IGNORECASE)
-PAGE_LINE_RE = re.compile(r"^===== PAGE (\d+) =====$")
 
 
 @dataclass
@@ -30,17 +29,21 @@ class Report:
         return not self.errors
 
 
-def _load_text(project: Project, key: str) -> tuple[list[str] | None, str | None]:
+def _load_text(
+    project: Project, key: str
+) -> tuple[list[str] | None, dict | None, str | None]:
     json_path = project.text_dir / f"{key}.json"
     if not json_path.is_file():
-        return None, "text_missing"
+        return None, None, "text_missing"
     try:
         payload = json.loads(json_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return None, "text_invalid"
+        return None, None, "text_invalid"
+    if not isinstance(payload, dict):
+        return None, None, "text_invalid"
     raw_pages = payload.get("pages")
     if not isinstance(raw_pages, list) or not raw_pages:
-        return None, "text_invalid"
+        return None, None, "text_invalid"
     pages: list[str] = []
     for entry in raw_pages:
         if isinstance(entry, dict) and isinstance(entry.get("text"), str):
@@ -48,59 +51,65 @@ def _load_text(project: Project, key: str) -> tuple[list[str] | None, str | None
         elif isinstance(entry, str):
             pages.append(entry)
         else:
-            return None, "text_invalid"
-    return pages, None
-
-
-def _text_file_pages(path: Path) -> list[str] | None:
-    try:
-        content = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return None
-    pages: list[str] = []
-    current: list[str] | None = None
-    for line in content.split("\n"):
-        if PAGE_LINE_RE.match(line):
-            if current is not None:
-                pages.append("\n".join(current).strip("\n"))
-            current = []
-            continue
-        if current is not None:
-            current.append(line)
-    if current is not None:
-        pages.append("\n".join(current).strip("\n"))
-    return pages or None
+            return None, None, "text_invalid"
+    return pages, payload, None
 
 
 class _TextCache:
     def __init__(self, project: Project):
         self.project = project
-        self._raw: dict[str, tuple[list[str] | None, str | None]] = {}
-        self._normalized: dict[str, list[str]] = {}
+        self._raw: dict[str, tuple[list[str] | None, dict | None, str | None]] = {}
+        self._normalized: dict[tuple[str, bool], list[str]] = {}
 
-    def get(self, key: str) -> tuple[list[str] | None, str | None]:
+    def get(self, key: str) -> tuple[list[str] | None, dict | None, str | None]:
         if key not in self._raw:
             self._raw[key] = _load_text(self.project, key)
         return self._raw[key]
 
-    def normalized(self, key: str) -> list[str]:
-        if key not in self._normalized:
-            pages, _ = self.get(key)
-            self._normalized[key] = [normalize_for_match(page) for page in (pages or [])]
-        return self._normalized[key]
+    def normalized(self, key: str, join_hyphenation: bool = True) -> list[str]:
+        cache_key = (key, join_hyphenation)
+        if cache_key not in self._normalized:
+            pages, _, _ = self.get(key)
+            self._normalized[cache_key] = [
+                normalize_for_match(page, join_hyphenation=join_hyphenation)
+                for page in (pages or [])
+            ]
+        return self._normalized[cache_key]
+
+
+def _find_span(haystack: str, needle: str) -> int | None:
+    """Find needle as a whole-word-ish span, not inside a larger word."""
+    start = 0
+    while True:
+        index = haystack.find(needle, start)
+        if index == -1:
+            return None
+        before = haystack[index - 1] if index > 0 else " "
+        after_index = index + len(needle)
+        after = haystack[after_index] if after_index < len(haystack) else " "
+        left_ok = not (before.isalnum() and needle[0].isalnum())
+        right_ok = not (after.isalnum() and needle[-1].isalnum())
+        if left_ok and right_ok:
+            return index
+        start = index + 1
 
 
 def verify_quote(
-    normalized_pages: list[str], quote: str, wanted_pages: list[int]
+    normalized_pages: list[str],
+    quote: str,
+    wanted_pages: list[int],
+    join_hyphenation: bool = True,
 ) -> int | None:
-    needle = normalize_for_match(quote)
+    needle = normalize_for_match(quote, join_hyphenation=join_hyphenation)
     if not needle:
         return None
     for number in wanted_pages:
-        if 1 <= number <= len(normalized_pages) and needle in normalized_pages[number - 1]:
+        if 1 <= number <= len(normalized_pages) and _find_span(
+            normalized_pages[number - 1], needle
+        ) is not None:
             return number
     for number, page in enumerate(normalized_pages, start=1):
-        if needle in page:
+        if _find_span(page, needle) is not None:
             return number
     return None
 
@@ -109,6 +118,7 @@ def run_check(
     project: Project,
     strict: bool = False,
     include_candidates: bool = True,
+    reextract: bool = False,
 ) -> Report:
     report = Report()
     manifest = project.manifest
@@ -161,13 +171,12 @@ def run_check(
 
         actual = sha256_file(path)
         if not source.sha256:
-            report.warnings.append(
+            report.errors.append(
                 Finding(
                     "source_unhashed",
                     f"{source.key} has no recorded hash",
-                    severity="warning",
                     file=source.path,
-                    hint="run `paperchain lock` to freeze the reference set",
+                    hint="run `paperchain convert`, or restore paper.toml from version control; an unhashed reference cannot be verified",
                 )
             )
         elif actual != source.sha256:
@@ -183,7 +192,7 @@ def run_check(
             normalized_hash_ok = False
 
         json_path = project.text_dir / f"{source.key}.json"
-        pages, text_error = cache.get(source.key)
+        pages, payload, text_error = cache.get(source.key)
         if text_error:
             report.errors.append(
                 Finding(
@@ -196,14 +205,50 @@ def run_check(
             )
         else:
             stats["pages"] += len(pages or [])
+            recorded_source = str((payload or {}).get("sha256", "") or "")
+            if recorded_source and recorded_source != actual:
+                report.errors.append(
+                    Finding(
+                        "text_stale",
+                        f"converted text for {source.key} was built from a different version of the original",
+                        file=project.relative(json_path),
+                        data={"key": source.key},
+                        hint=f"run `paperchain convert --force --only {source.key}`",
+                    )
+                )
+                normalized_hash_ok = False
+            if reextract:
+                try:
+                    fresh = extract(path)
+                except PaperchainError as exc:
+                    report.errors.append(
+                        Finding(
+                            "text_stale",
+                            f"cannot re-extract {source.key}: {exc.message}",
+                            file=source.path,
+                            data={"key": source.key},
+                        )
+                    )
+                    normalized_hash_ok = False
+                else:
+                    if fresh.pages != (pages or []):
+                        report.errors.append(
+                            Finding(
+                                "text_stale",
+                                f"converted text for {source.key} does not match a fresh extraction",
+                                file=project.relative(json_path),
+                                data={"key": source.key},
+                                hint=f"run `paperchain convert --force --only {source.key}`",
+                            )
+                        )
+                        normalized_hash_ok = False
             if not source.text_sha256:
-                report.warnings.append(
+                report.errors.append(
                     Finding(
                         "text_unhashed",
                         f"{source.key} converted text has no recorded hash",
-                        severity="warning",
                         file=project.relative(json_path),
-                        hint="run `paperchain lock`",
+                        hint="run `paperchain convert`, or restore paper.toml from version control; unhashed text cannot be verified",
                     )
                 )
             elif sha256_file(json_path) != source.text_sha256:
@@ -220,26 +265,36 @@ def run_check(
 
             txt_path = project.text_dir / f"{source.key}.txt"
             if not txt_path.is_file():
-                report.warnings.append(
+                report.errors.append(
                     Finding(
                         "text_file_missing",
                         f"References/_text/{source.key}.txt is missing",
-                        severity="warning",
                         file=project.relative(txt_path),
-                        hint="run `paperchain convert --force`; the agent reads the .txt files",
+                        hint="run `paperchain convert --force`; this is the file the writer reads",
                     )
                 )
             else:
-                from_txt = _text_file_pages(txt_path)
-                from_json = [page.strip() for page in (pages or [])]
-                if from_txt is not None and [page.strip() for page in from_txt] != from_json:
-                    report.warnings.append(
+                expected = render_text_file(
+                    source.key,
+                    Path(str((payload or {}).get("original", source.path))).name,
+                    Extraction(
+                        pages=pages or [],
+                        converter=str((payload or {}).get("converter", source.converter) or "unknown"),
+                        page_map_estimated=bool((payload or {}).get("page_map_estimated", False)),
+                    ),
+                )
+                try:
+                    actual_txt = txt_path.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    actual_txt = None
+                if actual_txt != expected:
+                    report.errors.append(
                         Finding(
-                            "text_inconsistent",
-                            f"the .txt and .json copies of {source.key} disagree",
-                            severity="warning",
+                            "text_file_mismatch",
+                            f"References/_text/{source.key}.txt does not match the anchored page map",
                             file=project.relative(txt_path),
-                            hint="run `paperchain convert --force` to regenerate both",
+                            data={"key": source.key},
+                            hint="run `paperchain convert --force` to regenerate it from the JSON",
                         )
                     )
 
@@ -270,10 +325,35 @@ def run_check(
                 )
 
     # -- citations -------------------------------------------------------
+    masked_text, mask_issues = scan_markdown(text)
+    for issue in mask_issues:
+        report.errors.append(
+            Finding(
+                issue.kind,
+                "an unterminated "
+                + ("HTML comment" if issue.kind == "unterminated_comment" else "code fence")
+                + " hides the rest of the document from check",
+                file="Paper/paper.md",
+                line=issue.line,
+                hint="close it, or the citations after it are never verified",
+            )
+        )
+
     citations = parse_citations(text)
     stats["citations"] = len(citations)
     cited_keys: set[str] = set()
-    normalized_pages_by_key: dict[str, list[str]] = {}
+
+    for snippet, line in find_unrecognized(masked_text, citations):
+        report.errors.append(
+            Finding(
+                "citation_unrecognized",
+                f"{snippet!r} looks like a citation but is not in the supported form",
+                file="Paper/paper.md",
+                line=line,
+                data={"snippet": snippet},
+                hint='use [@key, p. 12]; [see @key], [-@key], a bare @key and a bracketed @@key are not supported',
+            )
+        )
 
     for citation in citations:
         record: dict = {
@@ -329,7 +409,7 @@ def run_check(
                 )
             )
 
-        pages, text_error = cache.get(citation.key)
+        pages, _, text_error = cache.get(citation.key)
         page_count = len(pages or [])
 
         if citation.has_pages and page_count and (
@@ -349,26 +429,34 @@ def run_check(
         elif citation.quote:
             stats["citations_with_quote"] += 1
             if len(normalize_for_match(citation.quote).split()) < 4:
-                report.warnings.append(
-                    Finding(
-                        "quote_too_short",
-                        "the quoted span is shorter than four words",
-                        severity="warning",
-                        file="Paper/paper.md",
-                        line=citation.line,
-                        hint="quote a full clause so the check is meaningful",
-                    )
+                severity = "error" if (strict or manifest.require_quotes) else "warning"
+                finding = Finding(
+                    "quote_too_short",
+                    "the quoted span is shorter than four words",
+                    severity=severity,
+                    file="Paper/paper.md",
+                    line=citation.line,
+                    hint="quote a full clause so the check is meaningful",
                 )
+                (report.errors if severity == "error" else report.warnings).append(finding)
             if text_error or pages is None:
                 record["ok"] = False
             else:
-                if citation.key not in normalized_pages_by_key:
-                    normalized_pages_by_key[citation.key] = cache.normalized(citation.key)
                 found = verify_quote(
-                    normalized_pages_by_key[citation.key],
+                    cache.normalized(citation.key, join_hyphenation=True),
                     citation.quote,
                     citation.pages,
+                    join_hyphenation=True,
                 )
+                if found is None:
+                    # "well-\nknown" joins to "wellknown" for matching, but a
+                    # quote written as "well-known" should still verify.
+                    found = verify_quote(
+                        cache.normalized(citation.key, join_hyphenation=False),
+                        citation.quote,
+                        citation.pages,
+                        join_hyphenation=False,
+                    )
                 if found is None:
                     record["ok"] = False
                     preview = citation.quote[:60] + ("..." if len(citation.quote) > 60 else "")
@@ -436,7 +524,6 @@ def run_check(
             )
 
     # -- placeholders ----------------------------------------------------
-    masked_text = mask_code(text)
     for match in PLACEHOLDER_RE.finditer(masked_text):
         line = text.count("\n", 0, match.start()) + 1
         report.errors.append(
@@ -478,12 +565,13 @@ def run_check(
     elif normalized_hash_ok:
         writable = []
         for source in manifest.sources:
-            path = project.root / source.path
-            if path.is_file() and os.stat(path).st_mode & stat.S_IWRITE:
-                writable.append(source.path)
-            json_path = project.text_dir / f"{source.key}.json"
-            if json_path.is_file() and os.stat(json_path).st_mode & stat.S_IWRITE:
-                writable.append(project.relative(json_path))
+            for path, label in (
+                (project.root / source.path, source.path),
+                (project.text_dir / f"{source.key}.json", project.relative(project.text_dir / f"{source.key}.json")),
+                (project.text_dir / f"{source.key}.txt", project.relative(project.text_dir / f"{source.key}.txt")),
+            ):
+                if path.is_file() and os.stat(path).st_mode & stat.S_IWRITE:
+                    writable.append(label)
         if writable:
             report.warnings.append(
                 Finding(
