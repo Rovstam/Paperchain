@@ -300,7 +300,7 @@ def run_check(
                 report.errors.append(
                     Finding(
                         "text_file_missing",
-                        f"References/_text/{source.key}.txt is missing",
+                        f"{project.relative(txt_path)} is missing",
                         file=project.relative(txt_path),
                         hint="run `paperchain convert --force`; this is the file the writer reads",
                     )
@@ -323,7 +323,7 @@ def run_check(
                     report.errors.append(
                         Finding(
                             "text_file_mismatch",
-                            f"References/_text/{source.key}.txt does not match the anchored page map",
+                            f"{project.relative(txt_path)} does not match the anchored page map",
                             file=project.relative(txt_path),
                             data={"key": source.key},
                             hint="run `paperchain convert --force` to regenerate it from the JSON",
@@ -527,7 +527,7 @@ def run_check(
                             file="Paper/paper.md",
                             line=citation.line,
                             data={"key": citation.key, "quote": preview},
-                            hint=f"copy the words exactly from References/_text/{citation.key}.txt; extraction may need fixing for this page",
+                            hint=f"copy the words exactly from {project.relative(project.text_dir / f'{citation.key}.txt')}; extraction may need fixing for this page",
                         )
                     )
                 elif citation.has_pages and found not in citation.pages:

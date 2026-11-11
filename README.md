@@ -8,7 +8,7 @@ The point is not to make the agent smarter. It is to make its output cheap to au
 
 ```
 Manuscript/original.docx ──import (read-only)──> Paper/paper.md
-References/*/ref.pdf ──────convert────────────> References/_text/*.txt (+ page map)
+References/*/ref.pdf ──────convert────────────> AppData cache (*.txt + page map)
                                                         │
                                                check: keys, pages, quotes
                                                         │
@@ -78,6 +78,8 @@ paperchain doctor
 
 Until the first PyPI release, install from a clone. After that, `pipx install paperchain` (or `pip install -U paperchain`) is enough, and every paper gets fixes without copying scripts.
 
+Do **not** copy the repository, `.venv`, `.tools`, `src/` or `tests/` into each paper project. Install the command once; `pipx` keeps it in its own environment. The source checkout itself can live anywhere outside your documents, for example `C:\Tools\paperchain`. A paper project only needs the command on `PATH`.
+
 ## Five-minute demo
 
 ```bash
@@ -96,6 +98,15 @@ paperchain build
 
 `import`, `convert` and `lock` are yours to run. The agent is not allowed to import, convert, lock or unlock. If the original manuscript changes, `check` reports `manuscript_hash_mismatch`; re-run `paperchain import --force`, review the Markdown, and continue.
 
+If you already prepared the folder with the manuscript and references, adopt it instead of creating a new one:
+
+```bash
+cd "My Existing Thesis Folder"
+paperchain init . --adopt --title "My Existing Thesis"
+```
+
+`--adopt` writes only missing template files. It does not overwrite an existing manuscript, reference file, `AGENTS.md`, `opencode.json` or `Paper/paper.md`.
+
 ## Layout of a paper project
 
 ```
@@ -108,11 +119,10 @@ my-paper/
 │   ├── diabetes/          any subfolders you like
 │   │   ├── study.pdf
 │   │   └── review.docx
-│   ├── library.json       optional CSL JSON export from Zotero
-│   ├── originals/         legacy/default drop folder; subfolders work here too
-│   └── _text/             generated page-marked text + page maps (gitignored)
+│   └── library.json       optional CSL JSON export from Zotero
 ├── Candidates/            sources an agent proposes; not citable
 ├── Paper/paper.md         the only file the writer edits
+├── Paper/media/           images extracted from the original, if any
 ├── Output/                generated .docx (gitignored)
 ├── opencode.json          permissions and default agent
 └── .opencode/agents/      writer and scout
@@ -120,7 +130,17 @@ my-paper/
 
 The original manuscript and the reference files are ignored by git on purpose: they are copies of other people's work. Keep paper projects in **private** repositories.
 
-Reference types: PDF and DOCX are the intended formats. TXT and MD are still accepted because the existing converter supports them. Anything else is ignored with a warning. A file in `References/<folder>/name.pdf` gets the key `<folder>-name`, so two subfolders can both contain `review.pdf` without a collision.
+Generated page text, extracted manuscript images and build temp files are **not** stored in the project. They live in the OS cache folder:
+
+- Windows: `%LOCALAPPDATA%\paperchain\projects\<project-id>\`
+- macOS: `~/Library/Caches/paperchain/projects/<project-id>/`
+- Linux: `$XDG_CACHE_HOME/paperchain/projects/<project-id>/` (or `~/.cache/paperchain/...`)
+
+`paperchain doctor --json` reports the exact paths under `data.cache`. Set `PAPERCHAIN_CACHE_DIR` to move the cache somewhere else. The `project-id` is stored in `paper.toml`, so the cache survives moving the project folder.
+
+`Paper/media/` is kept as a folder link to the cache (a junction on Windows, a symlink elsewhere) so image paths in `paper.md` stay short. If the OS refuses to create the link, the images fall back to a normal folder inside `Paper/` and everything still works. OpenCode may ask once for permission to read the cache folder because it is outside the project. Allow that folder; it is generated text, not a source of truth.
+
+Reference types: PDF and DOCX are the intended formats. TXT and MD are still accepted because the existing converter supports them. Anything else is ignored with a warning. Loose PDF/DOCX files directly in `References/` are moved by `paperchain convert` into `References/<key>/<file>`; files already in subfolders are left alone. A file in `References/<folder>/name.pdf` gets the key `<folder>-name`, so two subfolders can both contain `review.pdf` without a collision. Projects from older versions that use `References/originals/` keep working.
 
 ## Citation syntax
 

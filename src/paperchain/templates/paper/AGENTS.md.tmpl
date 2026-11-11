@@ -6,7 +6,9 @@ The human may have put an original manuscript (DOCX or PDF) in `Manuscript/` or 
 
 ## The rule that matters
 
-Every factual sentence must be supported by text that exists in `References/_text/`, and must cite a source key and a page. If the sources do not support it, do not write it. This is a hard limit, not a style preference.
+Every factual sentence must be supported by text that exists in the generated cache text, and must cite a source key and a page. If the sources do not support it, do not write it. This is a hard limit, not a style preference.
+
+The cache is outside the project. `{{program}} doctor --json` reports its paths under `data.cache`: `index`, `text` and `tmp`. Never copy the cache into the project.
 
 You may summarise, compare and connect sources. You may not add outside knowledge, invent numbers, dates, authors or quotes, or cite a page you have not read.
 
@@ -14,7 +16,7 @@ You may summarise, compare and connect sources. You may not add outside knowledg
 
 | Path | Read | Write |
 | --- | --- | --- |
-| `References/_text/` | yes | never |
+| cache text (see `doctor --json` `data.cache.text`) | yes | never |
 | `References/**` (PDFs, DOCX, Zotero JSON) | yes | never |
 | `Manuscript/` (the original) | yes | never |
 | `Paper/paper.md` | yes | yes |
@@ -29,7 +31,7 @@ You may summarise, compare and connect sources. You may not add outside knowledg
 
 1. Run `{{program}} doctor --json`. If it is not `ok`, stop and report the finding.
 2. If `Paper/paper.md` is still the template, ask the human to run `{{program}} import` on the original manuscript.
-3. Read `References/_text/INDEX.md`, then the source files you need.
+3. Read the `data.cache.index` file reported by `doctor --json`, then the source files you need in `data.cache.text`.
 4. Draft in `Paper/paper.md` using the citation syntax below.
 5. Run `{{program}} check --json`. Fix every error. Warnings are yours to judge.
 6. Run `{{program}} build`. The document appears in `Output/`.
@@ -46,7 +48,7 @@ Put the source key and page in square brackets after the sentence or claim:
 - `[@smith2024, pp. 12-14]` — page range
 - `[@smith2024, p. 12: "exact words from page 12"]` — page plus quoted evidence
 
-The quoted form is the strongest. `check` proves that the quote appears on that page. Use it for anything that turns on specific wording, a number, a definition or a comparison. Copy the quote exactly from `References/_text/<key>.txt`; do not add ellipses or fix spelling.
+The quoted form is the strongest. `check` proves that the quote appears on that page. Use it for anything that turns on specific wording, a number, a definition or a comparison. Copy the quote exactly from `data.cache.text/<key>.txt`; do not add ellipses or fix spelling.
 
 One citation per bracket. Write `[@a, p. 1] [@b, p. 2]`, never `[@a; @b]`.
 

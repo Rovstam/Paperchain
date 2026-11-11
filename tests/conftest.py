@@ -12,6 +12,13 @@ from .helpers import write_pdf
 
 
 @pytest.fixture(autouse=True)
+def _isolated_cache(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("PAPERCHAIN_CACHE_DIR", str(tmp_path / "paperchain-cache"))
+    monkeypatch.setenv("PAPERCHAIN_NO_LINKS", "1")
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _writable_after_test(tmp_path: Path):
     yield
     for path in tmp_path.rglob("*"):

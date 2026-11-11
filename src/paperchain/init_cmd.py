@@ -20,8 +20,7 @@ SPECIAL_TEXT_NAMES = {"gitignore", "gitattributes", "AGENTS.md.tmpl"}
 
 DIRECTORIES = [
     "Manuscript",
-    "References/originals",
-    "References/_text",
+    "References",
     "Paper",
     "Candidates",
     "Output",
@@ -57,17 +56,28 @@ def _is_text(name: str) -> bool:
     return Path(name).suffix.lower() in TEXT_SUFFIXES
 
 
-def _copy_tree(source, destination: Path, context: dict[str, str]) -> int:
+def _copy_tree(
+    source,
+    destination: Path,
+    context: dict[str, str],
+    overwrite: bool,
+) -> tuple[int, int]:
     written = 0
+    skipped = 0
     for entry in source.iterdir():
         if entry.name in {"__pycache__"}:
             continue
         target = destination / _target_name(entry.name)
         if entry.is_dir():
             target.mkdir(parents=True, exist_ok=True)
-            written += _copy_tree(entry, target, context)
+            child_written, child_skipped = _copy_tree(entry, target, context, overwrite)
+            written += child_written
+            skipped += child_skipped
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists() and not overwrite:
+            skipped += 1
+            continue
         data = entry.read_bytes()
         if _is_text(entry.name):
             text = data.decode("utf-8")
@@ -75,10 +85,12 @@ def _copy_tree(source, destination: Path, context: dict[str, str]) -> int:
         else:
             target.write_bytes(data)
         written += 1
-    return written
+    return written, skipped
 
 
-def _copy_adapter(name: str, destination: Path, context: dict[str, str]) -> list[str]:
+def _copy_adapter(
+    name: str, destination: Path, context: dict[str, str], overwrite: bool
+) -> tuple[list[str], list[str]]:
     adapters = available_adapters()
     if name not in adapters:
         raise PaperchainError(
@@ -91,10 +103,14 @@ def _copy_adapter(name: str, destination: Path, context: dict[str, str]) -> list
     config = tomllib.loads(root.joinpath("adapter.toml").read_text(encoding="utf-8"))
     entries = config.get("files", [])
     written: list[str] = []
+    skipped: list[str] = []
     for entry in entries:
         source = root.joinpath(entry["source"])
         target = destination / entry["target"]
         target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists() and not overwrite:
+            skipped.append(entry["target"])
+            continue
         data = source.read_bytes()
         if _is_text(source.name):
             target.write_text(
@@ -103,7 +119,7 @@ def _copy_adapter(name: str, destination: Path, context: dict[str, str]) -> list
         else:
             target.write_bytes(data)
         written.append(entry["target"])
-    return written
+    return written, skipped
 
 
 def run_init(
@@ -112,6 +128,7 @@ def run_init(
     agent: str = "opencode",
     force: bool = False,
     git: bool = False,
+    adopt: bool = False,
 ) -> dict[str, Any]:
     destination = Path(directory).expanduser().resolve()
 
@@ -129,11 +146,11 @@ def run_init(
             f"{destination} already contains {MANIFEST_NAME}",
             hint="pass --force to overwrite the template files, or choose another folder",
         )
-    if destination.exists() and any(destination.iterdir()) and not force:
+    if destination.exists() and any(destination.iterdir()) and not (force or adopt):
         raise PaperchainError(
             "destination_not_empty",
             f"{destination} is not empty",
-            hint="choose an empty folder, or pass --force to write the template over it",
+            hint="choose an empty folder, pass --adopt to keep your files and add only the missing project files, or pass --force to overwrite template files",
         )
 
     destination.mkdir(parents=True, exist_ok=True)
@@ -154,12 +171,16 @@ def run_init(
             hint="reinstall paperchain",
         )
 
-    copied = _copy_tree(template_root, destination, context)
+    overwrite = bool(force)
+    copied, skipped = _copy_tree(template_root, destination, context, overwrite)
 
     manifest = new_manifest(resolved_title)
     manifest.save(destination / MANIFEST_NAME)
 
-    adapter_files = _copy_adapter(agent, destination, context)
+    adapter_files, skipped_adapters = _copy_adapter(
+        agent, destination, context, overwrite
+    )
+    skipped += len(skipped_adapters)
 
     for name in DIRECTORIES:
         folder = destination / name
@@ -191,10 +212,12 @@ def run_init(
         "git": git_initialized,
         "data": {
             "files": copied + len(adapter_files),
+            "skipped": skipped,
+            "adopted": adopt and not force,
             "adapter_files": adapter_files,
             "next": [
                 "put the original manuscript DOCX/PDF in Manuscript/ (or the project root)",
-                "put reference PDFs/DOCX in References/; subfolders are allowed",
+                "put reference PDFs/DOCX in References/; loose files are moved into their own folders, and subfolders are allowed",
                 f"{PROGRAM} import",
                 f"{PROGRAM} convert",
                 f"{PROGRAM} lock",

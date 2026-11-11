@@ -1,8 +1,6 @@
 # Reference files and their extracted text are copies of other people's work.
 References/originals/*
 !References/originals/.gitkeep
-References/_text/*
-!References/_text/.gitkeep
 References/**/*.pdf
 References/**/*.docx
 References/**/*.txt
@@ -13,6 +11,10 @@ Manuscript/*
 !Manuscript/.gitkeep
 /*.docx
 /*.pdf
+
+# Extracted manuscript images stay with the draft.
+Paper/media/*
+!Paper/media/.gitkeep
 
 # Generated documents
 Output/*

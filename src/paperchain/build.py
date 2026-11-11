@@ -98,13 +98,14 @@ def run_build(project: Project, force: bool = False) -> BuildResult:
         rendered += bibliography(original, sources)
 
     project.paper_dir.mkdir(parents=True, exist_ok=True)
-    temp_path = project.paper_dir / BUILD_FILENAME
+    project.tmp_dir.mkdir(parents=True, exist_ok=True)
+    temp_path = project.tmp_dir / BUILD_FILENAME
     output = project.output_path
     output.parent.mkdir(parents=True, exist_ok=True)
 
     command = [
         executable,
-        BUILD_FILENAME,
+        str(temp_path.resolve()),
         "--from",
         "markdown+smart",
         "--to",

@@ -23,8 +23,12 @@ Every error has a stable code in the JSON output. Use the code, not the prose, w
 | `manifest_invalid` | TOML is malformed, a key is not a lowercase slug, a key is duplicated, or a `path` is absolute or resolves outside `References/`. |
 | `manifest_version` | The project was written by a newer paperchain. Upgrade the tool. |
 | `already_initialized` | `init` found a `paper.toml`. Use `--force` only if you mean to overwrite template files. |
-| `destination_not_empty` | Choose an empty folder, or pass `--force`. |
+| `destination_not_empty` | Choose an empty folder, pass `--adopt` to keep existing files, or pass `--force` to overwrite template files. |
 | `unknown_adapter` | `init --agent X` where X does not exist. `paperchain init --help` lists the default; the adapters live inside the package. |
+
+## Cache
+
+Generated text, page maps, `INDEX.md`, manuscript media and build temp files live outside the project. `paperchain doctor --json` prints the path under `data.cache`. It is safe to delete the cache folder; run `paperchain convert` afterwards to regenerate it. Set `PAPERCHAIN_CACHE_DIR` before running the command to use a different location. If `Paper/media` is a junction/symlink, do not copy the project without also copying the cache; re-run `paperchain import` if the link is broken.
 
 ## Manuscript import
 
@@ -71,7 +75,7 @@ Every error has a stable code in the JSON output. Use the code, not the prose, w
 | Code | Meaning |
 | --- | --- |
 | `source_hash_mismatch` | An original changed after locking. Restore the file from backup; do not simply relock, because the old quotes were verified against the old bytes. |
-| `text_hash_mismatch` | `References/_text/*.json` was edited after conversion. Regenerate: unlock, `convert --force`, lock. |
+| `text_hash_mismatch` | A cached `*.json` page map was edited after conversion. Regenerate: unlock, `convert --force`, lock. |
 | `text_stale` | The converted JSON was built from a different version of the original than the one on disk, or a fresh extraction disagrees with it. Run `convert --force`; a relock must not bless stale text. Use `check --reextract` to catch a page map that was edited along with the manifest. |
 | `source_unhashed` / `text_unhashed` | The manifest has no hash for this source. Always an error: an unhashed reference cannot be verified. Run `convert`, or restore `paper.toml`. |
 | `text_missing` / `text_invalid` | Conversion output is missing or corrupt. Run `convert --force`. |
@@ -106,7 +110,7 @@ Every error has a stable code in the JSON output. Use the code, not the prose, w
 
 Extraction quality is the most common cause.
 
-1. Open `References/_text/<key>.txt` and search for the words. If they are absent, the PDF did not extract them.
+1. Open `<cache>/text/<key>.txt` (the path is in `paperchain doctor --json`, `data.cache.text`) and search for the words. If they are absent, the PDF did not extract them.
 2. A two-column paper often interleaves the columns. The text exists but in the wrong order, so a span across a column break will not match.
 3. Tables lose their cell structure. Quote a sentence instead of a table cell.
 4. Hyphenation at line ends is handled. Missing spaces are not: if the extractor produced `wordone` where the source has `word one`, the quote will not match.

@@ -5,6 +5,7 @@ try:  # Python 3.11+
 except ModuleNotFoundError:  # pragma: no cover - exercised on 3.10 only
     import tomli as tomllib  # type: ignore[no-redef]
 
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -110,6 +111,7 @@ class Source:
 class Manifest:
     title: str = ""
     slug: str = ""
+    project_id: str = ""
     created: str = ""
     locked_at: str = ""
     build_output: str = ""
@@ -162,6 +164,7 @@ class Manifest:
         return cls(
             title=str(data.get("title", "") or ""),
             slug=str(data.get("slug", "") or ""),
+            project_id=str(data.get("project_id", "") or ""),
             created=str(data.get("created", "") or ""),
             locked_at=str(data.get("locked_at", "") or ""),
             build_output=str(build.get("output", "") or ""),
@@ -184,6 +187,8 @@ class Manifest:
             lines.append(f"title = {toml_string(self.title)}")
         if self.slug:
             lines.append(f"slug = {toml_string(self.slug)}")
+        if self.project_id:
+            lines.append(f"project_id = {toml_string(self.project_id)}")
         if self.created:
             lines.append(f"created = {toml_string(self.created)}")
         if self.locked_at:
@@ -267,6 +272,7 @@ def new_manifest(title: str) -> Manifest:
     return Manifest(
         title=title,
         slug=slug,
+        project_id=uuid.uuid4().hex,
         created=now_iso(),
         build_output=f"Output/{slug}.docx",
     )

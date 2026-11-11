@@ -41,6 +41,50 @@ def test_init_creates_a_manuscript_folder(tmp_path: Path) -> None:
     run_init(str(root), title="My Project", agent="opencode")
     assert (root / "Manuscript").is_dir()
     assert (root / "References").is_dir()
+    assert not (root / "References" / "_text").exists()
+
+
+def test_init_adopt_keeps_existing_manuscript_and_references(tmp_path: Path) -> None:
+    root = tmp_path / "Existing Thesis"
+    (root / "References" / "topic").mkdir(parents=True)
+    write_docx = root / "Manuscript" / "Thesis.docx"
+    write_docx.parent.mkdir(parents=True)
+    write_docx.write_bytes(b"original manuscript bytes")
+    (root / "References" / "topic" / "study.pdf").write_bytes(b"reference bytes")
+
+    run_init(str(root), title="Existing Thesis", agent="opencode", adopt=True)
+
+    assert write_docx.read_bytes() == b"original manuscript bytes"
+    assert (root / "References" / "topic" / "study.pdf").read_bytes() == b"reference bytes"
+    assert (root / "paper.toml").is_file()
+    assert (root / "AGENTS.md").is_file()
+    assert (root / "Paper" / "paper.md").is_file()
+
+
+def test_generated_text_is_stored_outside_the_project(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    add_pdf(project, "study2024.pdf", ["Alpha text one."])
+    run_convert(project)
+    project = Project.open(project.root)
+
+    assert not project.text_dir.is_relative_to(project.root)
+    assert (project.text_dir / "study2024.txt").is_file()
+    assert not (project.root / "References" / "_text").exists()
+
+
+def test_convert_moves_loose_references_into_their_own_folders(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    write_pdf(project.references_dir / "study2024.pdf", ["Alpha text one."])
+    result = run_convert(project)
+
+    moved = project.references_dir / "study2024" / "study2024.pdf"
+    assert moved.is_file()
+    assert not (project.references_dir / "study2024.pdf").exists()
+    assert result["moved"]
+    project = Project.open(project.root)
+    source = project.manifest.source("study2024")
+    assert source is not None
+    assert source.path == "References/study2024/study2024.pdf"
 
 
 def test_convert_scans_reference_subfolders(tmp_path: Path) -> None:

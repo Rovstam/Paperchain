@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from .errors import Finding, PaperchainError
@@ -41,11 +42,54 @@ def _scan_references(project: Project) -> list[Path]:
     return files
 
 
+def organize_loose_references(project: Project) -> tuple[list[str], list[Finding]]:
+    """Move loose PDF/DOCX files into References/<key>/<file>.
+
+    Only files directly in References/ are moved. Nested files, legacy
+    References/originals/ layouts and bibliography exports are left alone.
+    """
+    moved: list[str] = []
+    warnings: list[Finding] = []
+    if not project.references_dir.is_dir():
+        return moved, warnings
+
+    for path in sorted(project.references_dir.iterdir()):
+        if not path.is_file() or path.name.startswith("."):
+            continue
+        if path.suffix.lower() not in {".pdf", ".docx"}:
+            continue
+        key = project.reference_key(path)
+        target_dir = project.references_dir / key
+        target = target_dir / path.name
+        if target.exists():
+            warnings.append(
+                Finding(
+                    "organize_skipped",
+                    f"{path.name} was not moved because {project.relative(target)} already exists",
+                    severity="warning",
+                    file=project.relative(path),
+                    hint="rename one of the files or move it into a different subfolder",
+                )
+            )
+            continue
+        old_rel = rel_posix(path, project.root)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(path), str(target))
+        new_rel = rel_posix(target, project.root)
+        for source in project.manifest.sources:
+            if source.path == old_rel:
+                source.path = new_rel
+        moved.append(f"{old_rel} -> {new_rel}")
+
+    return moved, warnings
+
+
 def run_convert(
     project: Project,
     force: bool = False,
     only: str | None = None,
     prune: bool = False,
+    organize: bool = True,
 ) -> dict:
     manifest = project.manifest
     if manifest.locked_at:
@@ -55,11 +99,16 @@ def run_convert(
             hint="run `paperchain unlock`, convert, then `paperchain lock`",
         )
 
+    moved: list[str] = []
+    warnings: list[Finding] = []
+    if organize and not only:
+        moved, warnings = organize_loose_references(project)
+
     files = _scan_references(project)
     supported = [path for path in files if path.suffix.lower() in SUPPORTED_SUFFIXES]
     unsupported = [path for path in files if path.suffix.lower() not in SUPPORTED_SUFFIXES]
 
-    warnings: list[Finding] = [
+    warnings.extend(
         Finding(
             "unsupported_file",
             f"{path.name} is not a supported reference type",
@@ -68,7 +117,7 @@ def run_convert(
             hint="supported types are PDF, DOCX, TXT and MD; other files are ignored",
         )
         for path in unsupported
-    ]
+    )
 
     # Map files to keys and refuse ambiguous names before writing anything.
     keyed: dict[str, Path] = {}
@@ -171,11 +220,14 @@ def run_convert(
         "converted": converted,
         "skipped": skipped,
         "pruned": pruned,
+        "moved": moved,
         "warnings": warnings,
         "data": {
             "sources": len(manifest.sources),
             "originals": len(supported),
-            "index": project.relative(project.text_dir / "INDEX.md"),
+            "moved": moved,
+            "cache": str(project.cache_dir),
+            "index": str(project.text_dir / "INDEX.md"),
         },
     }
 

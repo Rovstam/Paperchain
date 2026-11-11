@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+import os
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 from .errors import PaperchainError
+from .locations import project_cache
 from .manifest import MANIFEST_NAME, Manifest
 from .util import slugify
 
@@ -148,8 +152,27 @@ class Project:
         return self.references_dir / "originals"
 
     @property
+    def cache_dir(self) -> Path:
+        """Derived files live outside the project, in the OS cache folder."""
+        project_id = self.manifest.project_id
+        if not project_id:
+            digest = hashlib.sha256(str(self.root).encode("utf-8")).hexdigest()[:12]
+            project_id = f"legacy-{digest}"
+        return project_cache(project_id)
+
+    @property
     def text_dir(self) -> Path:
-        return self.references_dir / "_text"
+        # Projects created before 0.3.0 kept generated text in References/_text.
+        # Keep using it for those projects so an upgrade does not invalidate
+        # every existing hash.
+        legacy = self.references_dir / "_text"
+        if not self.manifest.project_id and legacy.is_dir():
+            return legacy
+        return self.cache_dir / "text"
+
+    @property
+    def tmp_dir(self) -> Path:
+        return self.cache_dir / "tmp"
 
     @property
     def paper_dir(self) -> Path:
@@ -162,6 +185,43 @@ class Project:
     @property
     def paper_media_dir(self) -> Path:
         return self.paper_dir / "media"
+
+    @property
+    def media_cache_dir(self) -> Path:
+        return self.cache_dir / "media"
+
+    def ensure_media_dir(self) -> Path:
+        """Make Paper/media usable, with the bytes in the cache when possible.
+
+        On Windows a directory junction is used; on POSIX a symlink. If the OS
+        refuses, fall back to a normal folder inside Paper/ so import still works.
+        Set PAPERCHAIN_NO_LINKS=1 to force the fallback.
+        """
+        link = self.paper_media_dir
+        target = self.media_cache_dir
+        target.mkdir(parents=True, exist_ok=True)
+        if link.exists() or link.is_symlink():
+            return link
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if os.environ.get("PAPERCHAIN_NO_LINKS"):
+            link.mkdir(parents=True, exist_ok=True)
+            return link
+        try:
+            if os.name == "nt":
+                completed = subprocess.run(
+                    ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+                if completed.returncode != 0:
+                    raise OSError((completed.stderr or completed.stdout or "").strip())
+            else:
+                link.symlink_to(target, target_is_directory=True)
+        except OSError:
+            link.mkdir(parents=True, exist_ok=True)
+        return link
 
     @property
     def manuscript_dir(self) -> Path:
@@ -194,8 +254,8 @@ class Project:
     def iter_reference_files(self) -> list[Path]:
         """All candidate reference documents under References/, recursively.
 
-        `References/_text` is generated, and bibliography exports such as
-        `library.json` are metadata. Neither is a reference document.
+        Legacy `References/_text` is generated, and bibliography exports such
+        as `library.json` are metadata. Neither is a reference document.
         """
         if not self.references_dir.is_dir():
             return []
@@ -228,6 +288,10 @@ class Project:
             self.references_dir.resolve(),
             self.originals_dir.resolve(),
         }:
+            return slugify(path.stem)
+        # References/study2024/study2024.pdf is the organized form: keep the
+        # key clean instead of turning it into study2024-study2024.
+        if slugify(path.parent.name) == slugify(path.stem):
             return slugify(path.stem)
         return f"{slugify(path.parent.name)}-{slugify(path.stem)}"
 

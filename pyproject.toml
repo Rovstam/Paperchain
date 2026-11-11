@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "paperchain"
-version = "0.2.0"
+version = "0.3.0"
 description = "Source-grounded paper writing for AI agents: convert references, verify every quote, build the .docx."
 readme = "README.md"
 requires-python = ">=3.10"

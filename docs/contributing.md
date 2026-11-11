@@ -23,8 +23,9 @@ src/paperchain/
 ├── extract.py      PDF/DOCX/TXT extraction and page maps
 ├── citations.py    syntax parsing and rendering
 ├── check.py        the verifier
-├── convert.py      writes References/_text
+├── convert.py      writes derived text to the OS cache
 ├── import_cmd.py   original manuscript -> Paper/paper.md
+├── locations.py    OS cache location (AppData / XDG / macOS)
 ├── library.py      CSL JSON bibliography loading
 ├── locking.py      hashes and read-only bits
 ├── build.py        pandoc, optional citeproc

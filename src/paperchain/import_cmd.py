@@ -29,8 +29,7 @@ def _pandoc() -> str:
 def _import_docx(source: Path, project: Project) -> str:
     executable = _pandoc()
     temp = project.paper_dir / ".import.md"
-    media = project.paper_media_dir
-    media.mkdir(parents=True, exist_ok=True)
+    media = project.ensure_media_dir()
     command = [
         executable,
         str(source),
@@ -162,6 +161,14 @@ def run_import(
             hint="check that the file is not a scan and is not empty",
         )
     project.paper_md.write_text(text.rstrip() + "\n", encoding="utf-8", newline="\n")
+
+    # Pandoc creates the media folder even when the manuscript has no images.
+    media = project.paper_media_dir
+    if media.is_dir() and not media.is_symlink() and not any(media.iterdir()):
+        try:
+            media.rmdir()
+        except OSError:
+            pass
 
     digest = sha256_file(resolved)
     project.manifest.manuscript_path = rel_posix(resolved, project.root)

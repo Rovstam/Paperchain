@@ -82,8 +82,12 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
             agent=args.agent,
             force=args.force,
             git=args.git,
+            adopt=args.adopt,
         )
-        summary = f'created "{result["title"]}" in {result["root"]} (adapter: {result["adapter"]})'
+        verb = "adopted" if result["data"].get("adopted") else "created"
+        summary = f'{verb} "{result["title"]}" in {result["root"]} (adapter: {result["adapter"]})'
+        if result["data"].get("skipped"):
+            summary += f"; kept {result['data']['skipped']} existing file(s)"
         if not result["git"] and args.git:
             summary += " [git init failed]"
         return _envelope(command, True, summary, data=result["data"])
@@ -105,9 +109,17 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
 
     if command == "convert":
         project = _project(args)
-        result = run_convert(project, force=args.force, only=args.only, prune=args.prune)
+        result = run_convert(
+            project,
+            force=args.force,
+            only=args.only,
+            prune=args.prune,
+            organize=not args.no_organize,
+        )
         parts = [f"converted {len(result['converted'])}"]
         parts.append(f"skipped {len(result['skipped'])}")
+        if result["moved"]:
+            parts.append(f"organized {len(result['moved'])}")
         if result["pruned"]:
             parts.append(f"pruned {len(result['pruned'])}")
         summary = ", ".join(parts) + f" ({result['data']['sources']} source(s) total)"
@@ -254,6 +266,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="agent adapter to install (default: opencode)",
     )
     p_init.add_argument("--force", action="store_true", help="write over an existing folder")
+    p_init.add_argument(
+        "--adopt",
+        action="store_true",
+        help="keep existing files and add only the missing project files",
+    )
     p_init.add_argument("--git", action="store_true", help="run git init in the new project")
 
     p_import = sub.add_parser(
@@ -281,6 +298,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_convert.add_argument("--force", action="store_true", help="re-extract even if unchanged")
     p_convert.add_argument("--only", metavar="KEY", help="convert one source by key")
     p_convert.add_argument("--prune", action="store_true", help="drop sources whose files are gone")
+    p_convert.add_argument(
+        "--no-organize",
+        action="store_true",
+        help="leave loose PDF/DOCX files directly in References/ instead of moving each into its own folder",
+    )
 
     p_lock = sub.add_parser(
         "lock",

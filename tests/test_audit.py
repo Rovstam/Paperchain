@@ -194,6 +194,7 @@ def test_a_bracket_inside_a_quote_does_not_end_the_citation(tmp_path: Path) -> N
 
 def test_a_hyphenated_compound_still_matches(tmp_path: Path) -> None:
     project = make_project(tmp_path)
+    project.originals_dir.mkdir(parents=True, exist_ok=True)
     (project.originals_dir / "study2024.txt").write_text(
         "This is a well-\nknown result.", encoding="utf-8"
     )

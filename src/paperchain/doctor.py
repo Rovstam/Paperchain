@@ -75,6 +75,15 @@ def run_doctor(project: Project) -> dict:
     )
 
     manifest = project.manifest
+    checks.append(
+        Check(
+            "cache",
+            "ok",
+            str(project.cache_dir),
+            "generated text and build temp live here, outside the project",
+        )
+    )
+
     if manifest.manuscript_path:
         manuscript = project.root / manifest.manuscript_path
         if not manuscript.is_file():
@@ -184,5 +193,12 @@ def run_doctor(project: Project) -> dict:
         "data": {
             "project": str(project.root),
             "sources": len(manifest.sources),
+            "cache": {
+                "root": str(project.cache_dir),
+                "text": str(project.text_dir),
+                "index": str(project.text_dir / "INDEX.md"),
+                "media": str(project.media_cache_dir),
+                "tmp": str(project.tmp_dir),
+            },
         },
     }

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.0 — external cache and per-reference folders
+
+### Added
+
+- Derived text, page maps, `INDEX.md` and build temp files now live in the OS cache (`%LOCALAPPDATA%\paperchain` on Windows) instead of inside each project. `paperchain doctor --json` reports the paths under `data.cache`, and `PAPERCHAIN_CACHE_DIR` overrides the location.
+- `paperchain convert` moves loose PDF/DOCX files directly under `References/` into `References/<key>/<file>`. Nested files are left alone. `--no-organize` disables the move.
+- A project gets a stable `project_id` in `paper.toml`, so its cache survives moving the project folder.
+
+### Changed
+
+- `paperchain init --adopt` initializes a folder that already contains a manuscript and references, adding only missing template files and never overwriting existing ones.
+- `paperchain init` no longer creates `References/_text/`.
+- The generated `AGENTS.md` tells the writer to read the cache paths from `paperchain doctor --json`.
+- Project folders now contain only inputs, `paper.toml`, `Paper/paper.md`, `Paper/media/`, agent files and `Output/`.
+
 ## 0.2.0 — project folders, manuscript import, Zotero bibliography
 
 ### Added

@@ -8,8 +8,8 @@ This document is for the human maintaining a paper and for the agent writing it.
 paper.toml            manifest: the source list, hashes and build settings
 Manuscript/           the original DOCX/PDF; never edited
 References/<topic>/   the PDF/DOCX/TXT/MD files you supplied; subfolders allowed
-References/_text/     derived text, one .txt and one .json per source
 References/library.json  optional CSL JSON export from Zotero
+cache (outside project)  generated text, page maps, INDEX.md, media and build temp
 Paper/paper.md        the draft
 Candidates/           proposed sources, awaiting a human
 Output/               generated .docx
@@ -30,10 +30,13 @@ So the draft is `Paper/paper.md`, and `paperchain build` renders it with pandoc.
 
 ## Conversion and page maps
 
-Each source becomes two files:
+Each source becomes two files in the OS cache, not in the project:
 
-- `References/_text/<key>.txt` — what the agent reads. A line `===== PAGE 12 =====` marks each page.
-- `References/_text/<key>.json` — what `check` reads. It holds the pages as structured text, plus the source hash and the converter version.
+- `<cache>/text/<key>.txt` — what the agent reads. A line `===== PAGE 12 =====` marks each page.
+- `<cache>/text/<key>.json` — what `check` reads. It holds the pages as structured text, plus the source hash and the converter version.
+- `<cache>/text/INDEX.md` — the index reported by `paperchain doctor --json` as `data.cache.index`.
+
+The cache is `%LOCALAPPDATA%\paperchain\projects\<project-id>` on Windows, `~/Library/Caches/paperchain/...` on macOS, and `$XDG_CACHE_HOME/paperchain/...` on Linux. Set `PAPERCHAIN_CACHE_DIR` to override it. `Paper/media/` is a junction/symlink to the cache media folder when the OS allows it, so links in `paper.md` remain `media/...`; otherwise it is a normal folder. Loose PDF/DOCX files directly in `References/` are moved into `References/<key>/` before conversion; nested files are left alone.
 
 PDFs are extracted with pypdf. DOCX is read directly from `word/document.xml` with the standard library, so there is no dependency and no round-trip. Runs marked hidden, deleted text and text-box contents are skipped, because a reader does not see them; `noBreakHyphen` becomes a hyphen. A zip with two document parts, or an XML part larger than 32 MB, is rejected. TXT and MD are read as-is.
 

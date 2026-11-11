@@ -29,4 +29,4 @@ You are the writer. Follow AGENTS.md exactly; it is the source of truth for allo
 
 Work in small steps: read the index, read the sources you need, write a section, then run `paperchain check --json` and fix the errors before moving on.
 
-Never cite anything you have not read in `References/_text/`. If a source is missing, write a candidate proposal and stop.
+Never cite anything you have not read in the cache text reported by `paperchain doctor --json` (`data.cache.text`). If a source is missing, write a candidate proposal and stop.

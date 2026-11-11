@@ -312,6 +312,7 @@ def test_symlink_outside_originals_is_rejected(tmp_path: Path) -> None:
 
 def test_an_at_sign_inside_a_quote_is_not_multiple_citations(tmp_path: Path) -> None:
     project = make_project(tmp_path)
+    project.originals_dir.mkdir(parents=True, exist_ok=True)
     (project.originals_dir / "study2024.txt").write_text(
         "Contact @bob today.", encoding="utf-8"
     )
