@@ -4,6 +4,7 @@
 
 ### Added
 
+- `paperchain help` prints the quick-start instructions, and `paperchain help --json` returns them as structured steps so an agent can relay them without scanning folders.
 - Derived text, page maps, `INDEX.md` and build temp files now live in the OS cache (`%LOCALAPPDATA%\paperchain` on Windows) instead of inside each project. `paperchain doctor --json` reports the paths under `data.cache`, and `PAPERCHAIN_CACHE_DIR` overrides the location.
 - `paperchain convert` moves loose PDF/DOCX files directly under `References/` into `References/<key>/<file>`. Nested files are left alone. `--no-organize` disables the move.
 - A project gets a stable `project_id` in `paper.toml`, so its cache survives moving the project folder.

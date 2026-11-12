@@ -6,6 +6,8 @@
 
 The point is not to make the agent smarter. It is to make its output cheap to audit.
 
+Run `paperchain help` at any time for the short version. Agents should run `paperchain help --json` and relay `data.steps` instead of searching folders.
+
 ```
 Manuscript/original.docx ──import (read-only)──> Paper/paper.md
 References/*/ref.pdf ──────convert────────────> AppData cache (*.txt + page map)
@@ -169,6 +171,7 @@ csl = "styles/vancouver.csl"
 
 | Command | Who runs it | What it does |
 | --- | --- | --- |
+| `paperchain help` | anyone | print the quick-start instructions; `--json` returns them as steps for agents |
 | `paperchain init` | human | create a project folder from the template |
 | `paperchain import` | human | copy the original manuscript to `Paper/paper.md` without editing the original |
 | `paperchain convert` | human or agent | extract page-marked text from references (recursively) |
@@ -185,10 +188,13 @@ Every command prints human text by default and one JSON object with `--json`. Ex
 | Tool | Status | Files |
 | --- | --- | --- |
 | OpenCode V2 | config verified on 2.2.6; permission checklist not run | `opencode.json`, `.opencode/agents/writer.md`, `.opencode/agents/scout.md` |
+| GitHub Copilot in VS Code | instructions shipped; no permission enforcement | `AGENTS.md`, `.github/copilot-instructions.md` |
 | Claude Code | not shipped | needs `CLAUDE.md` with `@AGENTS.md` and a settings file |
 | Codex | not shipped | reads `AGENTS.md`; needs its own sandbox settings |
 
 The rules live in `AGENTS.md` for every tool. Permission files are adapters, because each tool invents its own format. The adapter is a guardrail, not the guarantee.
+
+For VS Code, open the project folder itself and select the `Paper/paper.md` file. GitHub Copilot reads `.github/copilot-instructions.md` in recent versions. The integrated terminal must also find `paperchain`: either select Git Bash as the default terminal profile, or add `C:\Users\PERSONAL\Paperchain\.venv\Scripts` to the Windows user `PATH`. Copilot has no permission enforcement, so `paperchain check` remains the evidence.
 
 ## Documentation
 

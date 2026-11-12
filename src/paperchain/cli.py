@@ -13,6 +13,7 @@ from .check import run_check
 from .convert import run_convert
 from .doctor import run_doctor
 from .errors import Finding, PaperchainError
+from .help_cmd import help_data
 from .import_cmd import run_import
 from .init_cmd import run_init
 from .locking import run_lock, run_unlock
@@ -74,6 +75,10 @@ def _findings(code: str, checks: list[dict], severity: str) -> list[Finding]:
 
 def dispatch(args: argparse.Namespace) -> dict[str, Any]:
     command = args.command
+
+    if command == "help":
+        data = help_data()
+        return _envelope(command, True, data["title"], data=data)
 
     if command == "init":
         result = run_init(
@@ -252,6 +257,13 @@ def build_parser() -> argparse.ArgumentParser:
         dest="command", required=True, metavar="command", parser_class=_Parser
     )
 
+    sub.add_parser(
+        "help",
+        parents=[common],
+        help="show the quick-start instructions",
+        description="Print the Paperchain quick-start instructions. Use --json for an agent-readable payload.",
+    )
+
     p_init = sub.add_parser(
         "init",
         parents=[common],
@@ -360,7 +372,33 @@ def _location(finding: dict[str, Any]) -> str:
     return file or "-"
 
 
+def _print_help(data: dict[str, Any]) -> None:
+    print(data["title"])
+    print()
+    print(data["intro"])
+    for step in data.get("steps", []):
+        print()
+        print(step["title"])
+        if step.get("text"):
+            print(f"  {step['text']}")
+        for command in step.get("commands", []):
+            print(f"  $ {command}")
+    notes = data.get("notes", [])
+    if notes:
+        print()
+        print("Notes")
+        for note in notes:
+            print(f"  - {note}")
+    if data.get("json_hint"):
+        print()
+        print(data["json_hint"])
+
+
 def print_human(payload: dict[str, Any]) -> None:
+    if payload["command"] == "help":
+        _print_help(payload["data"])
+        return
+
     print(payload["summary"])
     # Doctor prints its own check list; the findings would duplicate it.
     if payload["command"] != "doctor":

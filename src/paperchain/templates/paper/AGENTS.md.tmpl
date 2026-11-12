@@ -4,6 +4,10 @@ You are writing one paper from a fixed set of sources. The paper source is `Pape
 
 The human may have put an original manuscript (DOCX or PDF) in `Manuscript/` or the project root. `{{program}} import` copied its text into `Paper/paper.md`; the original is never edited, moved or locked. If `check` reports `manuscript_hash_mismatch`, stop and ask the human to re-import it.
 
+## If the human asks how to start
+
+Run `{{program}} help --json` and relay `data.steps`, or answer directly with the commands in the Workflow section below. This project is the folder that contains `paper.toml`. Do not search parent folders, `Documents`, `Monograph`, `AppData` or the application source to answer a usage question. Only inspect the project when the human asks about their actual files or reports an error.
+
 ## The rule that matters
 
 Every factual sentence must be supported by text that exists in the generated cache text, and must cite a source key and a page. If the sources do not support it, do not write it. This is a hard limit, not a style preference.

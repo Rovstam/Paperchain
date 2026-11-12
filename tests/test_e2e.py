@@ -38,6 +38,7 @@ def test_init_creates_the_layout_and_adapter(tmp_path: Path) -> None:
         "opencode.json",
         ".opencode/agents/writer.md",
         ".opencode/agents/scout.md",
+        ".github/copilot-instructions.md",
         "Paper/paper.md",
         "Candidates/index.md",
     ]:
