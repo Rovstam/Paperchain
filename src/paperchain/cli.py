@@ -17,6 +17,7 @@ from .help_cmd import help_data
 from .import_cmd import run_import
 from .init_cmd import run_init
 from .locking import run_lock, run_unlock
+from .organize import run_organize
 from .project import Project
 
 EXIT_OK = 0
@@ -93,9 +94,43 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
         summary = f'{verb} "{result["title"]}" in {result["root"]} (adapter: {result["adapter"]})'
         if result["data"].get("skipped"):
             summary += f"; kept {result['data']['skipped']} existing file(s)"
+        if result["data"].get("backups"):
+            summary += "; saved " + ", ".join(result["data"]["backups"])
         if not result["git"] and args.git:
             summary += " [git init failed]"
         return _envelope(command, True, summary, data=result["data"])
+
+    if command == "organize":
+        project = _project(args)
+        result = run_organize(
+            project,
+            apply=args.apply,
+            manuscript=args.manuscript,
+            references=args.reference,
+            dumps=args.dump,
+        )
+        moves = result["data"]["moves"]
+        counts = result["data"]["counts"]
+        if result["applied"]:
+            summary = f"moved {len(moves)} file(s) into the project folders"
+        else:
+            summary = (
+                f"plan: {len(moves)} file(s) would move; nothing changed "
+                "(re-run with --apply)"
+            )
+        if counts:
+            summary += " (" + ", ".join(
+                f"{count} {kind}" for kind, count in sorted(counts.items())
+            ) + ")"
+        if result["candidates"]:
+            summary += "; more than one possible manuscript"
+        return _envelope(
+            command,
+            True,
+            summary,
+            warnings=result["warnings"],
+            data=result["data"],
+        )
 
     if command == "import":
         project = _project(args)
@@ -104,6 +139,8 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
             f"imported {result['source']} into {result['paper']} "
             f"({result['words']} words); the original was not modified"
         )
+        if result.get("backups"):
+            summary += f"; previous draft saved as {', '.join(result['backups'])}"
         return _envelope(
             command,
             True,
@@ -120,6 +157,7 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
             only=args.only,
             prune=args.prune,
             organize=not args.no_organize,
+            accept_changes=args.accept_changes,
         )
         parts = [f"converted {len(result['converted'])}"]
         parts.append(f"skipped {len(result['skipped'])}")
@@ -285,6 +323,37 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_init.add_argument("--git", action="store_true", help="run git init in the new project")
 
+    p_organize = sub.add_parser(
+        "organize",
+        parents=[common],
+        help="sort existing files into Manuscript/, References/ and Dump/",
+        description="Move files that already exist in the project into the folders paperchain expects. Without --apply it only prints the plan.",
+    )
+    p_organize.add_argument(
+        "--apply",
+        action="store_true",
+        help="move the files; without it, print the plan and change nothing",
+    )
+    p_organize.add_argument(
+        "--manuscript",
+        metavar="PATH",
+        help="the original DOCX/PDF when more than one candidate exists",
+    )
+    p_organize.add_argument(
+        "--reference",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="an extra file or folder to treat as references (repeatable)",
+    )
+    p_organize.add_argument(
+        "--dump",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="an extra file or folder to treat as working material (repeatable)",
+    )
+
     p_import = sub.add_parser(
         "import",
         parents=[common],
@@ -314,6 +383,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-organize",
         action="store_true",
         help="leave loose PDF/DOCX files directly in References/ instead of moving each into its own folder",
+    )
+    p_convert.add_argument(
+        "--accept-changes",
+        action="store_true",
+        help="accept references that changed since the last conversion",
     )
 
     p_lock = sub.add_parser(
@@ -422,6 +496,14 @@ def print_human(payload: dict[str, Any]) -> None:
             print(f"  {mark} {check['name']}: {check['detail']}")
             if check["status"] != "ok" and check.get("hint"):
                 print(f"        {check['hint']}")
+    if payload["command"] == "organize":
+        moves = data.get("moves") or []
+        for move in moves[:60]:
+            print(f"  {move['kind']:<10} {move['source']} -> {move['target']}")
+        if len(moves) > 60:
+            print(f"  ... and {len(moves) - 60} more")
+        for candidate in data.get("candidates") or []:
+            print(f"  candidate manuscript: {candidate}")
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -105,6 +105,7 @@ def run_build(project: Project, force: bool = False) -> BuildResult:
 
     command = [
         executable,
+        "--sandbox",
         str(temp_path.resolve()),
         "--from",
         "markdown+smart",
@@ -160,6 +161,19 @@ def run_build(project: Project, force: bool = False) -> BuildResult:
             "pandoc_failed",
             f"pandoc failed with exit code {completed.returncode}",
             hint=detail[-800:] or "run pandoc by hand in Paper/ to see the full error",
+        )
+
+    # --sandbox stops Pandoc from reading files outside the project and from
+    # fetching URLs. Older Pandoc exits 0 after dropping such a resource, so
+    # the warning has to be promoted to a failure.
+    resource_warning = "Could not fetch resource" in (completed.stderr or "")
+    if resource_warning:
+        detail = (completed.stderr or "").strip()
+        raise PaperchainError(
+            "pandoc_resource_blocked",
+            "a referenced image or file could not be embedded",
+            hint=((detail[-800:] + "\n") if detail else "")
+            + "put images under Paper/ (for example Paper/media/) and use a relative path; remote URLs are not fetched",
         )
 
     if not output.is_file():

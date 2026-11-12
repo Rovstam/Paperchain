@@ -26,7 +26,8 @@ def test_keeps_word_order() -> None:
 
 def test_slugify() -> None:
     assert slugify("Smith & Jones (2024) — Final") == "smith-jones-2024-final"
-    assert slugify("...") == "doc"
+    assert slugify("...").startswith("doc-")
+    assert slugify("研究一") != slugify("研究二")
 
 
 def test_word_count() -> None:

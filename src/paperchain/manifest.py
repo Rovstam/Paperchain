@@ -12,7 +12,7 @@ from typing import Any
 
 from . import SCHEMA_VERSION
 from .errors import PaperchainError
-from .util import now_iso, slugify
+from .util import now_iso, slugify, write_text as write_text_file
 
 MANIFEST_NAME = "paper.toml"
 
@@ -239,7 +239,7 @@ class Manifest:
                 if value:
                     lines.append(f"{field_name} = {value if isinstance(value, int) else toml_string(value)}")
 
-        path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+        write_text_file(path, "\n".join(lines) + "\n")
 
     # -- helpers ---------------------------------------------------------
 

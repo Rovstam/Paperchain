@@ -195,7 +195,7 @@ def scan_markdown(text: str) -> tuple[str, list[MaskIssue]]:
                 at_line_start = False
                 continue
 
-        if text.startswith("<!--", index):
+        if text.startswith("<!--", index) and not _is_escaped(text, index):
             end = text.find("-->", index + 4)
             if end == -1:
                 issues.append(MaskIssue("unterminated_comment", line))
@@ -306,6 +306,34 @@ def find_unrecognized(masked: str, citations: list[Citation]) -> list[tuple[str,
             continue
         line = masked.count("\n", 0, position) + 1
         found.append((match.group(0), line))
+    return found
+
+
+_ENTITY_AT_RE = re.compile(r"&#0*64;|&#[xX]0*40;|&commat;", re.IGNORECASE)
+_ESCAPED_AT_RE = re.compile(r"(?<!\\)\\@")
+_BRACKET_SPAN_RE = re.compile(r"\[[^\]\n]*\]")
+
+
+def find_hidden_citations(masked: str) -> list[tuple[str, int]]:
+    """Find citation-shaped brackets that Pandoc will render literally.
+
+    Pandoc decodes HTML entities and backslash escapes before it writes the
+    document, so ``[&#64;key, p. 1]`` and ``[\\@key, p. 1]`` reach the reader as
+    citations even though the scanner never parsed them. They cannot be
+    verified, so they are reported like any other unrecognised citation.
+    """
+    found: list[tuple[str, int]] = []
+    for match in _BRACKET_SPAN_RE.finditer(masked):
+        span = match.group(0)
+        escaped_bracket = _is_escaped(masked, match.start()) and "@" in span
+        if not (
+            _ENTITY_AT_RE.search(span)
+            or _ESCAPED_AT_RE.search(span)
+            or escaped_bracket
+        ):
+            continue
+        line = masked.count("\n", 0, match.start()) + 1
+        found.append((span, line))
     return found
 
 

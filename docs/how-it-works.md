@@ -13,12 +13,24 @@ cache (outside project)  generated text, page maps, INDEX.md, media and build te
 Paper/paper.md        the draft
 Candidates/           proposed sources, awaiting a human
 Output/               generated .docx
+Dump/                 working material, old folders and name conflicts
 AGENTS.md             the rules
 ```
 
 Only `Paper/paper.md`, `Candidates/` and `Output/` are ever written by an agent, and `Output/` only through `paperchain build`.
 
-`paperchain import` reads the original manuscript and writes `Paper/paper.md`. The original is never edited, moved or made read-only. Its hash is stored in `paper.toml`; `check` reports `manuscript_hash_mismatch` if it is replaced, so stale Markdown cannot be built silently. DOCX import uses Pandoc (headings, tables and images are kept where Pandoc can represent them). PDF import extracts plain paragraphs and says so in a warning.
+`paperchain import` reads the original manuscript and writes `Paper/paper.md`. The original is never edited, moved or made read-only. Its hash is stored in `paper.toml`; `check` reports `manuscript_hash_mismatch` if it is replaced, and `manuscript_unhashed` if the path has no hash at all, so stale Markdown cannot be built silently. `import --force` saves the draft it replaces as `Paper/paper.md.bak`. DOCX import uses Pandoc (headings, tables and images are kept where Pandoc can represent them). PDF import extracts plain paragraphs and says so in a warning.
+
+## Adopting a folder that already has files
+
+`paperchain init . --adopt` adds only the missing project files; it never moves existing material. `paperchain organize` then builds a plan:
+
+- the original DOCX/PDF goes to `Manuscript/`;
+- documents in reference folders (`Referencias/`, `References/`, `Articulos/`, `Bibliografia/`, `Sources/`, `Fuentes/`, ...) go to `References/`, keeping their subfolders;
+- loose PDF/DOCX files in the project root go to `References/`, unless the name looks like a guide, example, norm or template; those go to `Dump/`;
+- every other file or folder (old notes, rules, examples, reviews) goes to `Dump/`.
+
+Before planning a move, `organize` hashes the file. If the same bytes are already present anywhere under `References/`, the extra copy is archived under `Dump/` instead of being added again, so a reference tree copied by hand does not become a duplicate. Different files that would land on the same name go to `Dump/conflicts/`; nothing is overwritten and nothing is deleted. The plan is read-only by default; `--apply` performs the moves and updates `paper.toml` when the manuscript moved. Use `--manuscript PATH` when more than one candidate exists, and `--reference PATH` / `--dump PATH` to override the classification of a file or folder.
 
 Reference paths are relative to `References/` and may be nested. A file directly in `References/` or `References/originals/` keeps its filename as the key; `References/diabetes/study.pdf` becomes `diabetes-study`.
 
@@ -38,7 +50,7 @@ Each source becomes two files in the OS cache, not in the project:
 
 The cache is `%LOCALAPPDATA%\paperchain\projects\<project-id>` on Windows, `~/Library/Caches/paperchain/...` on macOS, and `$XDG_CACHE_HOME/paperchain/...` on Linux. Set `PAPERCHAIN_CACHE_DIR` to override it. `Paper/media/` is a junction/symlink to the cache media folder when the OS allows it, so links in `paper.md` remain `media/...`; otherwise it is a normal folder. Loose PDF/DOCX files directly in `References/` are moved into `References/<key>/` before conversion; nested files are left alone.
 
-PDFs are extracted with pypdf. DOCX is read directly from `word/document.xml` with the standard library, so there is no dependency and no round-trip. Runs marked hidden, deleted text and text-box contents are skipped, because a reader does not see them; `noBreakHyphen` becomes a hyphen. A zip with two document parts, or an XML part larger than 32 MB, is rejected. TXT and MD are read as-is.
+PDFs are extracted with pypdf. DOCX is read directly from `word/document.xml` with the standard library, so there is no dependency and no round-trip. Runs marked hidden, deleted text and text-box contents are skipped, because a reader does not see them; hidden formatting is read from both direct run properties and `word/styles.xml` (character and paragraph styles, including `basedOn` inheritance). `noBreakHyphen` becomes a hyphen. A zip with two document parts, or an XML part larger than 32 MB, is rejected. TXT and MD are read as-is.
 
 Word has no fixed pages, so a DOCX becomes a single page and the citation page is always `p. 1`. That is honest but weak; export to PDF when page-level evidence matters.
 
@@ -56,7 +68,7 @@ Word has no fixed pages, so a DOCX becomes a single page and the citation page i
 
 Step 2 is why `--accept-changes` cannot launder fabricated text: the original is the reference, not the JSON. Step 5 only removes write permission; it never grants a permission the file did not already have.
 
-The comparison in step 3 is what stops `lock` from silently blessing an edit made after `unlock`. `--accept-changes` is the explicit opt-in; the old hashes are then replaced.
+The comparison in step 3 is what stops `lock` from silently blessing an edit made after `unlock`. `--accept-changes` is the explicit opt-in; the old hashes are then replaced. `convert` applies the same rule: when a source's bytes changed since the last conversion it stops with `convert_changes` unless `--accept-changes` is passed, so the unlock/convert/relock sequence is deliberate rather than silent.
 
 `paperchain check` re-hashes and reports `source_hash_mismatch` or `text_hash_mismatch` if anything moved. `paperchain unlock` makes the files writable again and clears the lock timestamp, but it keeps the hashes so a later check still detects edits. A missing hash is always an error: a reference the tool cannot hash is a reference it cannot verify.
 
@@ -113,7 +125,7 @@ Error codes are stable and documented in [troubleshooting](troubleshooting.md).
 
 ## Build
 
-`build` runs `check` first and refuses to write a document while errors remain, unless `--force`. If `References/library.json` exists (or `[build] bibliography` is set), it removes the verification quotes, keeps the page locators, and lets Pandoc citeproc format the citations and bibliography from the CSL JSON. Otherwise it renders citations to author-year text and appends a reference list for cited sources (skipped if `paper.md` already has a `## References` heading). It calls pandoc with `Paper/` as the working directory so relative image paths behave. The intermediate markdown is deleted afterwards.
+`build` runs `check` first and refuses to write a document while errors remain, unless `--force`. If `References/library.json` exists (or `[build] bibliography` is set), it removes the verification quotes, keeps the page locators, and lets Pandoc citeproc format the citations and bibliography from the CSL JSON. Otherwise it renders citations to author-year text and appends a reference list for cited sources (skipped if `paper.md` already has a `## References` heading). It calls pandoc with `Paper/` as the working directory and `--sandbox`, so relative image paths work but files outside the project and remote URLs cannot be embedded; a blocked resource fails the build with `pandoc_resource_blocked`. The intermediate markdown is deleted afterwards.
 
 Citeproc output is static formatted text, not live Zotero fields. Use the Zotero Word plugin when fields must refresh inside Word. The project currently emits DOCX only.
 

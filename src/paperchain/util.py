@@ -58,7 +58,29 @@ def slugify(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value)
     ascii_value = normalized.encode("ascii", "ignore").decode("ascii")
     slug = re.sub(r"[^a-z0-9]+", "-", ascii_value.lower()).strip("-")
-    return slug or "doc"
+    if slug:
+        return slug
+    # Names with no ASCII letters (for example 研究一.pdf) still need distinct
+    # keys. A short digest of the original value keeps them stable and unique.
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:8]
+    return f"doc-{digest}"
+
+
+def backup_path(path: Path) -> Path | None:
+    """Copy an existing file next to itself before it is overwritten.
+
+    Returns the backup path, or None when there was nothing to save. Existing
+    backups are never overwritten: the suffix gets a counter instead.
+    """
+    if not path.is_file():
+        return None
+    candidate = path.with_name(f"{path.name}.bak")
+    counter = 1
+    while candidate.exists():
+        candidate = path.with_name(f"{path.name}.bak.{counter}")
+        counter += 1
+    candidate.write_bytes(path.read_bytes())
+    return candidate
 
 
 def rel_posix(path: Path, root: Path) -> str:
@@ -100,11 +122,15 @@ def normalize_for_match(text: str, join_hyphenation: bool = True) -> str:
     text = unicodedata.normalize("NFKC", text)
     text = text.replace("\u00ad", "")  # soft hyphen
     text = text.translate(_QUOTE_TABLE)
+    # Only letters are joined. A hyphen between digits marks a range
+    # ("10-\n20"), not a word broken across a line; joining it would turn
+    # "10-20" into "1020" and let a quote match words that were never there.
+    letter = r"[^\W\d_]"
     if join_hyphenation:
         # Join words split across a line by a hyphen, e.g. "exam-\nple".
-        text = re.sub(r"(\w)-\s*\n\s*(\w)", r"\1\2", text)
+        text = re.sub(rf"({letter})-\s*\n\s*({letter})", r"\1\2", text)
     else:
-        text = re.sub(r"(\w)-\s*\n\s*(\w)", r"\1-\2", text)
+        text = re.sub(rf"({letter})-\s*\n\s*({letter})", r"\1-\2", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip().casefold()
 

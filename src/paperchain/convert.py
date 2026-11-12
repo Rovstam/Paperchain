@@ -15,6 +15,27 @@ from .manifest import Source
 from .project import Project
 from .util import now_iso, rel_posix, sha256_file
 
+# File metadata often names the person who installed the software, not the
+# author of the work. Treat these as "unknown" instead of printing them as an
+# attribution in the paper.
+GENERIC_AUTHORS = {
+    "administrator",
+    "admin",
+    "user",
+    "owner",
+    "author",
+    "unknown",
+    "windows user",
+    "microsoft office user",
+}
+GENERIC_TITLES = {"untitled", "untitled document", "document1", "microsoft word"}
+
+
+def _is_generic(value: str, generic: set[str]) -> bool:
+    cleaned = " ".join(value.split()).casefold()
+    return not cleaned or cleaned in generic
+
+
 
 def _scan_references(project: Project) -> list[Path]:
     if not project.references_dir.is_dir():
@@ -90,6 +111,7 @@ def run_convert(
     only: str | None = None,
     prune: bool = False,
     organize: bool = True,
+    accept_changes: bool = False,
 ) -> dict:
     manifest = project.manifest
     if manifest.locked_at:
@@ -148,16 +170,36 @@ def run_convert(
             hint=f"available keys: {', '.join(sorted(keyed)) or '(none)'}",
         )
 
+    targets = [
+        (key, path) for key, path in sorted(keyed.items()) if not only or key == only
+    ]
+    digests = {key: sha256_file(path) for key, path in targets}
+
+    # Re-converting a changed original silently rewrites its hash. That is the
+    # sequence `check` recommends after an unlock, so it needs the same
+    # explicit confirmation that `lock --accept-changes` already requires.
+    changes = [
+        f"{key}: original changed"
+        for key, _ in targets
+        if (existing := manifest.source(key)) is not None
+        and existing.sha256
+        and existing.sha256 != digests[key]
+    ]
+    if changes and not accept_changes:
+        raise PaperchainError(
+            "convert_changes",
+            "the reference set changed since it was last converted: " + "; ".join(changes),
+            hint="inspect the files, then re-run `paperchain convert --accept-changes` to bless them",
+        )
+
     converted: list[str] = []
     skipped: list[str] = []
     project.text_dir.mkdir(parents=True, exist_ok=True)
 
-    for key, path in sorted(keyed.items()):
-        if only and key != only:
-            continue
+    for key, path in targets:
         original_rel = rel_posix(path, project.root)
         size = path.stat().st_size
-        digest = sha256_file(path)
+        digest = digests[key]
         json_path = project.text_dir / f"{key}.json"
         txt_path = project.text_dir / f"{key}.txt"
         existing = manifest.source(key)
@@ -192,15 +234,47 @@ def run_convert(
         source = existing or Source(key=key, path=original_rel)
         source.path = original_rel
         if not source.title and extraction.title:
-            source.title = extraction.title
+            if _is_generic(extraction.title, GENERIC_TITLES):
+                warnings.append(
+                    Finding(
+                        "source_metadata_unconfirmed",
+                        f"{key}: the file title {extraction.title!r} is a placeholder, not a work title",
+                        severity="warning",
+                        file=original_rel,
+                        hint="set title, authors and year in paper.toml",
+                    )
+                )
+            else:
+                source.title = extraction.title
         if not source.authors and extraction.authors:
-            source.authors = extraction.authors
+            if _is_generic(extraction.authors, GENERIC_AUTHORS):
+                warnings.append(
+                    Finding(
+                        "source_metadata_unconfirmed",
+                        f"{key}: the file metadata names {extraction.authors!r} as the author",
+                        severity="warning",
+                        file=original_rel,
+                        hint="set authors and year in paper.toml; that name would otherwise appear in the paper",
+                    )
+                )
+            else:
+                source.authors = extraction.authors
         source.sha256 = digest
         source.size = size
         source.pages = extraction.page_count
         source.converter = extraction.converter
         source.converted_at = now_iso()
         source.text_sha256 = sha256_file(json_path)
+        if source.year is None:
+            warnings.append(
+                Finding(
+                    "source_metadata_unconfirmed",
+                    f"{key} has no year in paper.toml",
+                    severity="warning",
+                    file=original_rel,
+                    hint="add year = 2024 under [[sources]]; extracted metadata does not contain a reliable year",
+                )
+            )
         manifest.upsert(source)
         converted.append(key)
 

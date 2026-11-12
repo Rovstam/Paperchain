@@ -89,12 +89,13 @@ def test_a_double_backslash_citation_is_still_checked(tmp_path: Path) -> None:
     assert "page_out_of_range" in _codes(run_check(project))
 
 
-def test_a_single_backslash_escape_is_left_alone(tmp_path: Path) -> None:
+def test_an_escaped_bracket_that_renders_as_a_citation_is_reported(tmp_path: Path) -> None:
+    # Pandoc drops the backslash and prints "[@study2024, p. 9]", so the
+    # citation is visible to a reader but was never verified. It is now
+    # reported instead of being silently ignored.
     project = _project_with_page(tmp_path)
     write_paper(project, "# T\n\n\\[@study2024, p. 9]\n")
-    codes = _codes(run_check(project))
-    assert "citation_unrecognized" not in codes
-    assert "page_out_of_range" not in codes
+    assert "citation_unrecognized" in _codes(run_check(project))
 
 
 def test_missing_hashes_while_locked_are_errors(tmp_path: Path) -> None:

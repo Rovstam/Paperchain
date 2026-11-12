@@ -7,14 +7,22 @@ import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .citations import find_unrecognized, parse_citations, scan_markdown
+from .citations import (
+    find_hidden_citations,
+    find_unrecognized,
+    parse_citations,
+    scan_markdown,
+)
 from .errors import Finding, PaperchainError
 from .extract import SUPPORTED_SUFFIXES, Extraction, extract, render_text_file
-from .library import bibliography_keys
+from .library import load_csl_entries, titles_agree
 from .project import Project
 from .util import normalize_for_match, sha256_file, word_count
 
-PLACEHOLDER_RE = re.compile(r"\b(TODO|TKTK|FIXME|XXX)\b|\[\[|lorem ipsum", re.IGNORECASE)
+PLACEHOLDER_RE = re.compile(r"\b(TODO|TKTK|FIXME)\b|\[\[|lorem ipsum", re.IGNORECASE)
+# XXX is also a Roman numeral ("Super Bowl XXX"), so only treat it as a
+# placeholder when it stands alone on a line or sits in brackets.
+XXX_PLACEHOLDER_RE = re.compile(r"(?m)^\s{0,3}(?:#{1,6}\s+|[-*+]\s+)?XXX\s*$|\[\s*XXX\s*\]")
 
 
 @dataclass
@@ -78,8 +86,30 @@ class _TextCache:
         return self._normalized[cache_key]
 
 
+def _is_word_char(char: str) -> bool:
+    return char.isalnum() or char == "_"
+
+
+def _starts_wordish(needle: str) -> bool:
+    first = needle[0]
+    if _is_word_char(first):
+        return True
+    # "-5" and ".5" are number fragments: they must not match inside "1-5" or
+    # "1.5" just because their first character is punctuation.
+    return first in "-.+" and len(needle) > 1 and needle[1].isdigit()
+
+
+def _ends_wordish(needle: str) -> bool:
+    last = needle[-1]
+    if _is_word_char(last):
+        return True
+    return last in "-.+" and len(needle) > 1 and needle[-2].isdigit()
+
+
 def _find_span(haystack: str, needle: str) -> int | None:
     """Find needle as a whole-word-ish span, not inside a larger word."""
+    if not needle:
+        return None
     start = 0
     while True:
         index = haystack.find(needle, start)
@@ -88,8 +118,8 @@ def _find_span(haystack: str, needle: str) -> int | None:
         before = haystack[index - 1] if index > 0 else " "
         after_index = index + len(needle)
         after = haystack[after_index] if after_index < len(haystack) else " "
-        left_ok = not (before.isalnum() and needle[0].isalnum())
-        right_ok = not (after.isalnum() and needle[-1].isalnum())
+        left_ok = not (_is_word_char(before) and _starts_wordish(needle))
+        right_ok = not (_is_word_char(after) and _ends_wordish(needle))
         if left_ok and right_ok:
             return index
         start = index + 1
@@ -167,7 +197,16 @@ def run_check(
                     hint="restore it, or run `paperchain import` to register a new one",
                 )
             )
-        elif project.manifest.manuscript_sha256:
+        elif not project.manifest.manuscript_sha256:
+            report.errors.append(
+                Finding(
+                    "manuscript_unhashed",
+                    f"{manuscript} has no recorded hash",
+                    file=manuscript,
+                    hint="run `paperchain import --force` so a later replacement is detectable",
+                )
+            )
+        else:
             actual = sha256_file(manuscript_path)
             if actual != project.manifest.manuscript_sha256:
                 report.errors.append(
@@ -179,7 +218,7 @@ def run_check(
                             "expected": project.manifest.manuscript_sha256,
                             "actual": actual,
                         },
-                        hint="re-run `paperchain import --force` to regenerate Paper/paper.md, then review it",
+                        hint="re-run `paperchain import --force` (the current draft is saved as paper.md.bak), then review Paper/paper.md",
                     )
                 )
 
@@ -245,7 +284,7 @@ def run_check(
                         f"converted text for {source.key} was built from a different version of the original",
                         file=project.relative(json_path),
                         data={"key": source.key},
-                        hint=f"run `paperchain convert --force --only {source.key}`",
+                        hint=f"run `paperchain convert --force --accept-changes --only {source.key}`",
                     )
                 )
                 normalized_hash_ok = False
@@ -270,7 +309,11 @@ def run_check(
                                 f"converted text for {source.key} does not match a fresh extraction",
                                 file=project.relative(json_path),
                                 data={"key": source.key},
-                                hint=f"run `paperchain convert --force --only {source.key}`",
+                                hint=(
+                                    f"run `paperchain convert --force --accept-changes --only {source.key}`; "
+                                    f"if the original did not change, the extractor version may differ "
+                                    f"(converted with {source.converter or 'unknown'})"
+                                ),
                             )
                         )
                         normalized_hash_ok = False
@@ -290,7 +333,7 @@ def run_check(
                         f"converted text for {source.key} was edited after conversion",
                         file=project.relative(json_path),
                         data={"key": source.key},
-                        hint="run `paperchain unlock`, then `paperchain convert --force`, then `paperchain lock`",
+                        hint="run `paperchain unlock`, then `paperchain convert --force --accept-changes`, then `paperchain lock`",
                     )
                 )
                 normalized_hash_ok = False
@@ -375,9 +418,11 @@ def run_check(
 
     bibliography = project.bibliography_path
     bibliography_key_set: set[str] | None = None
+    bibliography_entries: dict[str, dict] = {}
     if bibliography is not None:
         try:
-            bibliography_key_set = bibliography_keys(bibliography)
+            bibliography_entries = load_csl_entries(bibliography)
+            bibliography_key_set = set(bibliography_entries)
         except PaperchainError as exc:
             report.errors.append(
                 Finding(
@@ -385,6 +430,44 @@ def run_check(
                     exc.message,
                     file=project.relative(bibliography),
                     hint=exc.hint,
+                )
+            )
+
+    # -- source metadata --------------------------------------------------
+    # convert fills title/authors from PDF or DOCX metadata, which is often
+    # wrong ("Administrator", a filename, no year). A warning keeps that out
+    # of the citation and reference list until a human confirms it.
+    for source in manifest.sources:
+        missing = [
+            label
+            for label, value in (("authors", source.authors.strip()), ("year", source.year))
+            if not value
+        ]
+        if missing:
+            report.warnings.append(
+                Finding(
+                    "source_metadata_unconfirmed",
+                    f"{source.key} has no {' or '.join(missing)} in paper.toml",
+                    severity="warning",
+                    file="paper.toml",
+                    data={"key": source.key, "missing": missing},
+                    hint="set authors and year in paper.toml; extraction cannot tell whether the metadata names the right work",
+                )
+            )
+        entry = bibliography_entries.get(source.key)
+        if entry and source.title and not titles_agree(source.title, entry.get("title")):
+            report.warnings.append(
+                Finding(
+                    "source_metadata_mismatch",
+                    f"{source.key}: paper.toml title and the bibliography entry describe different works",
+                    severity="warning",
+                    file="paper.toml",
+                    data={
+                        "key": source.key,
+                        "source_title": source.title,
+                        "bibliography_title": str(entry.get("title", "")),
+                    },
+                    hint="check that the PDF under this key is the work the CSL entry names",
                 )
             )
 
@@ -397,6 +480,18 @@ def run_check(
                 line=line,
                 data={"snippet": snippet},
                 hint='use [@key, p. 12]; [see @key], [-@key], a bare @key and a bracketed @@key are not supported',
+            )
+        )
+
+    for snippet, line in find_hidden_citations(masked_text):
+        report.errors.append(
+            Finding(
+                "citation_unrecognized",
+                f"{snippet!r} will render as a citation but cannot be verified",
+                file="Paper/paper.md",
+                line=line,
+                data={"snippet": snippet},
+                hint="write the citation literally as [@key, p. 12: \"quote\"]; entities and backslash escapes hide it from check",
             )
         )
 
@@ -593,6 +688,18 @@ def run_check(
                 file="Paper/paper.md",
                 line=line,
                 hint="finish the section or remove the marker before building",
+            )
+        )
+
+    for match in XXX_PLACEHOLDER_RE.finditer(masked_text):
+        line = text.count("\n", 0, match.start()) + 1
+        report.errors.append(
+            Finding(
+                "placeholder",
+                "unfinished text: 'XXX'",
+                file="Paper/paper.md",
+                line=line,
+                hint="finish the section or remove the marker; inline 'XXX' (as in 'Super Bowl XXX') is left alone",
             )
         )
 

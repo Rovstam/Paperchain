@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 from importlib.resources import files
 from pathlib import Path
@@ -13,10 +14,12 @@ except ModuleNotFoundError:  # pragma: no cover
 from . import PROGRAM
 from .errors import PaperchainError
 from .manifest import MANIFEST_NAME, new_manifest
-from .util import now_iso, slugify
+from .util import backup_path, now_iso, rel_posix, slugify
 
 TEXT_SUFFIXES = {".md", ".toml", ".json", ".jsonc", ".txt", ".yml", ".yaml", ".tmpl", ".example"}
 SPECIAL_TEXT_NAMES = {"gitignore", "gitattributes", "AGENTS.md.tmpl"}
+
+_TEMPLATE_RE = re.compile(r"\{\{(program|title|slug|date)\}\}")
 
 DIRECTORIES = [
     "Manuscript",
@@ -45,9 +48,11 @@ def _target_name(name: str) -> str:
 
 
 def _render(text: str, context: dict[str, str]) -> str:
-    for key, value in context.items():
-        text = text.replace("{{" + key + "}}", value)
-    return text
+    # A single pass means a title containing "{{date}}" is inserted literally
+    # instead of being expanded a second time inside the rendered template.
+    return _TEMPLATE_RE.sub(
+        lambda match: context.get(match.group(1), match.group(0)), text
+    )
 
 
 def _is_text(name: str) -> bool:
@@ -172,6 +177,14 @@ def run_init(
         )
 
     overwrite = bool(force)
+    backups: list[str] = []
+    if force:
+        # --force replaces template files. The draft and the manifest are the
+        # two files a human cannot regenerate, so keep a copy of each first.
+        for name in ("Paper/paper.md", MANIFEST_NAME):
+            saved = backup_path(destination / name)
+            if saved is not None:
+                backups.append(rel_posix(saved, destination))
     copied, skipped = _copy_tree(template_root, destination, context, overwrite)
 
     manifest = new_manifest(resolved_title)
@@ -204,6 +217,21 @@ def run_init(
         except OSError:
             git_initialized = False
 
+    next_steps = [
+        "put the original manuscript DOCX/PDF in Manuscript/ (or the project root)",
+        "put reference PDFs/DOCX in References/; loose files are moved into their own folders, and subfolders are allowed",
+        f"{PROGRAM} import",
+        f"{PROGRAM} convert",
+        f"{PROGRAM} lock",
+        f"{PROGRAM} check",
+        f"{PROGRAM} build",
+    ]
+    if adopt and not force:
+        next_steps = [
+            f"{PROGRAM} organize",
+            f"{PROGRAM} organize --apply",
+        ] + next_steps
+
     return {
         "root": str(destination),
         "title": resolved_title,
@@ -214,15 +242,8 @@ def run_init(
             "files": copied + len(adapter_files),
             "skipped": skipped,
             "adopted": adopt and not force,
+            "backups": backups,
             "adapter_files": adapter_files,
-            "next": [
-                "put the original manuscript DOCX/PDF in Manuscript/ (or the project root)",
-                "put reference PDFs/DOCX in References/; loose files are moved into their own folders, and subfolders are allowed",
-                f"{PROGRAM} import",
-                f"{PROGRAM} convert",
-                f"{PROGRAM} lock",
-                f"{PROGRAM} check",
-                f"{PROGRAM} build",
-            ],
+            "next": next_steps,
         },
     }

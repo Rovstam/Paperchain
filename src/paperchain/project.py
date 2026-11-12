@@ -24,7 +24,7 @@ REFERENCE_SKIP_NAMES = {
     "index.md",
     "readme.md",
 }
-REFERENCE_METADATA_SUFFIXES = {".json", ".bib", ".csl", ".ris", ".yaml", ".yml"}
+REFERENCE_METADATA_SUFFIXES = {".json", ".bib", ".csl", ".ris", ".yaml", ".yml", ".xlsx", ".csv"}
 
 
 def find_root(start: Path | None = None) -> Path:
@@ -66,6 +66,13 @@ class Project:
     def validate(self) -> None:
         """Reject manifests that could steer the tool outside the project."""
         references = (self.root / "References").resolve()
+        project_id = self.manifest.project_id
+        if project_id and not re.fullmatch(r"[0-9a-f]{32}", project_id):
+            raise PaperchainError(
+                "manifest_invalid",
+                f"invalid project_id {project_id!r}",
+                hint="project_id is the 32-character uuid hex written by `paperchain init`; restore it or delete the line and re-run `paperchain convert`",
+            )
         seen: set[str] = set()
         for source in self.manifest.sources:
             if not KEY_RE.match(source.key):

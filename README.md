@@ -2,7 +2,7 @@
 
 **Write papers with an AI agent that can only use the sources you gave it.**
 
-`paperchain` is a small Python CLI plus a set of agent rules. You create one folder per project, put the original manuscript in it, and put reference PDFs and Word files under `References/` in whatever subfolders you like. The tool imports the manuscript to Markdown without touching the original, converts the references to page-marked text, hashes them, and makes them read-only. The agent edits `Paper/paper.md` with citations that name a source and a page. `paperchain check` then proves that every citation resolves and every quoted span actually occurs on the cited page. `paperchain build` turns the Markdown into a `.docx`.
+`paperchain` is a small Python CLI plus a set of agent rules. You create one folder per project, put the original manuscript in it, and put reference PDFs and Word files under `References/` each on it's respective folder. The tool imports the manuscript to Markdown without touching the original, converts the references to page-marked text, hashes them, and makes them read-only. The agent edits `Paper/paper.md` with citations that name a source and a page. `paperchain check` then proves that every citation resolves and every quoted span actually occurs on the cited page. `paperchain build` turns the Markdown into a `.docx`.
 
 The point is not to make the agent smarter. It is to make its output cheap to audit.
 
@@ -33,7 +33,7 @@ The real safeguard is `paperchain check`, not the permission files. Permissions 
 
 ## Install
 
-Requires Python 3.10+ and [pandoc](https://pandoc.org/installing.html) (pandoc is needed for DOCX import, `build`, and citeproc; PDF/TXT import and `check` do not need it).
+Requires Python 3.10+ and [pandoc](https://pandoc.org/installing.html) 2.15 or newer (pandoc is needed for DOCX import, `build`, and citeproc; `build` uses `--sandbox`; PDF/TXT import and `check` do not need it).
 
 <details>
 <summary><strong>Windows</strong></summary>
@@ -98,16 +98,18 @@ paperchain build
 
 `init` creates the project folder, the layout, `AGENTS.md`, `paper.toml` and the OpenCode agent files. Open the folder in OpenCode and the `writer` agent is selected by default.
 
-`import`, `convert` and `lock` are yours to run. The agent is not allowed to import, convert, lock or unlock. If the original manuscript changes, `check` reports `manuscript_hash_mismatch`; re-run `paperchain import --force`, review the Markdown, and continue.
+`import`, `convert` and `lock` are yours to run. The agent is not allowed to import, convert, lock or unlock. If the original manuscript changes, `check` reports `manuscript_hash_mismatch`; re-run `paperchain import --force` (the current draft is saved as `Paper/paper.md.bak`), review the Markdown, and continue.
 
 If you already prepared the folder with the manuscript and references, adopt it instead of creating a new one:
 
 ```bash
 cd "My Existing Thesis Folder"
 paperchain init . --adopt --title "My Existing Thesis"
+paperchain organize          # print the move plan; nothing changes
+paperchain organize --apply  # move the files into Manuscript/, References/ and Dump/
 ```
 
-`--adopt` writes only missing template files. It does not overwrite an existing manuscript, reference file, `AGENTS.md`, `opencode.json` or `Paper/paper.md`.
+`--adopt` writes only missing template files. It does not overwrite an existing manuscript, reference file, `AGENTS.md`, `opencode.json` or `Paper/paper.md`. `organize` then sorts what was already there: the original manuscript goes to `Manuscript/`, reference documents to `References/`, and working material (rules, examples, reviews, old notes) to `Dump/`. It deduplicates references by content, never deletes, and sends name conflicts to `Dump/conflicts/`.
 
 ## Layout of a paper project
 
@@ -126,6 +128,7 @@ my-paper/
 ├── Paper/paper.md         the only file the writer edits
 ├── Paper/media/           images extracted from the original, if any
 ├── Output/                generated .docx (gitignored)
+├── Dump/                  working material, old folders, conflicts
 ├── opencode.json          permissions and default agent
 └── .opencode/agents/      writer and scout
 ```
@@ -173,8 +176,9 @@ csl = "styles/vancouver.csl"
 | --- | --- | --- |
 | `paperchain help` | anyone | print the quick-start instructions; `--json` returns them as steps for agents |
 | `paperchain init` | human | create a project folder from the template |
+| `paperchain organize` | human | sort existing files into `Manuscript/`, `References/` and `Dump/`; plan first, `--apply` to move |
 | `paperchain import` | human | copy the original manuscript to `Paper/paper.md` without editing the original |
-| `paperchain convert` | human or agent | extract page-marked text from references (recursively) |
+| `paperchain convert` | human | extract page-marked text from references (recursively); the agent adapter denies it |
 | `paperchain lock` | human | record hashes, refuse to bless changes without `--accept-changes`, make references read-only |
 | `paperchain unlock` | human | make references writable again |
 | `paperchain check` | agent | verify hashes, keys, pages, quotes |
@@ -194,7 +198,7 @@ Every command prints human text by default and one JSON object with `--json`. Ex
 
 The rules live in `AGENTS.md` for every tool. Permission files are adapters, because each tool invents its own format. The adapter is a guardrail, not the guarantee.
 
-For VS Code, open the project folder itself and select the `Paper/paper.md` file. GitHub Copilot reads `.github/copilot-instructions.md` in recent versions. The integrated terminal must also find `paperchain`: either select Git Bash as the default terminal profile, or add `C:\Users\PERSONAL\Paperchain\.venv\Scripts` to the Windows user `PATH`. Copilot has no permission enforcement, so `paperchain check` remains the evidence.
+For VS Code, open the project folder itself and select the `Paper/paper.md` file. GitHub Copilot reads `.github/copilot-instructions.md` in recent versions. The integrated terminal must also find `paperchain`: either select Git Bash as the default terminal profile, or add the `Scripts` folder of the Python environment where paperchain is installed (for example `<project>\.venv\Scripts`) to the Windows user `PATH`. Copilot has no permission enforcement, so `paperchain check` remains the evidence.
 
 ## Documentation
 

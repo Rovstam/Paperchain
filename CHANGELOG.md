@@ -1,6 +1,35 @@
 # Changelog
 
-## 0.3.0 — external cache and per-reference folders
+## Unreleased - third audit fixes
+
+An external audit of 0.3.0 found places where the verifier, the extractor and the recovery commands could still fail silently. This entry records the fixes; the error-code table in `docs/troubleshooting.md` lists the new codes.
+
+### Fixed
+
+- `check` now honours a backslash-escaped `<!--`, and reports citation-shaped text that Pandoc would render literally: HTML entities such as `[&#64;key]` and `[&commat;key]`, an escaped `[\@key]`, and an escaped bracket. They reuse `citation_unrecognized` rather than a new code.
+- DOCX extraction reads `word/styles.xml`, so text hidden by a character style or a paragraph style (including `basedOn` inheritance) is skipped instead of verifying a quote. A style part that cannot be parsed warns with `docx_styles_ignored`.
+- Quote matching rejects a leading `-` or `.` inside a number: `"-5 degrees"` no longer matches `1-5 degrees`, and `".5 mg"` no longer matches `1.5 mg`.
+- Line-break hyphen joining is restricted to letters, so `10-\n20` stays a range instead of becoming `1020`.
+- A manuscript path without a `sha256` is now `manuscript_unhashed`, an error, matching `source_unhashed`.
+- `project_id` must be a 32-character lowercase uuid hex; absolute paths, separators and traversal are rejected before they reach the cache path.
+- The OpenCode adapter no longer allows `git diff *`, which could write through `--output`; `--output`, shell metacharacters and quoted `unlock`/`init`/`convert`/`import`/`lock` are denied after the allow rules.
+- `build` runs Pandoc with `--sandbox`, and a resource Pandoc refuses to read (outside the project or a remote URL) fails the build with `pandoc_resource_blocked` instead of being dropped silently.
+- `init --force` and `import --force` save the draft (and `init --force` the manifest) as `*.bak` before overwriting; `doctor` and `check` hints say so.
+- `convert` requires `--accept-changes` when a reference changed since the last conversion, so the unlock/convert/relock sequence no longer re-blesses a changed source silently.
+- New `paperchain organize` command: plan-first sorting of an adopted folder into `Manuscript/`, `References/` and `Dump/`. It deduplicates by content, never deletes, and puts name collisions in `Dump/conflicts/`; `--apply` performs the moves and updates `paper.toml`.
+- Non-Latin filenames get a stable hashed key instead of all collapsing to `doc`.
+- `XXX` is a placeholder only when it stands alone on a line or sits in brackets, so "Super Bowl XXX" no longer blocks a build.
+- Generic file metadata (`Administrator`, `Untitled`, and so on) is not used as an attribution; `convert` and `check` warn with `source_metadata_unconfirmed` when authors or year are missing, and `source_metadata_mismatch` when the CSL entry appears to describe a different work.
+- `Manifest.save` writes through the atomic temp-file path.
+- `init` expands template placeholders in one pass, so a title containing `{{date}}` is not expanded again.
+- `pypdf` is bounded below 8.0 to reduce cross-version extraction drift.
+
+### Documentation
+
+- `README.md` no longer calls `convert` an agent command or hardcodes a local install path.
+- `docs/how-it-works.md` and `docs/troubleshooting.md` describe the sandbox, the style-based hidden-text handling and the new error codes.
+
+## 0.3.0 - external cache and per-reference folders
 
 ### Added
 

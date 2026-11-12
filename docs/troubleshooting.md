@@ -35,10 +35,13 @@ Generated text, page maps, `INDEX.md`, manuscript media and build temp files liv
 | Code | Meaning |
 | --- | --- |
 | `manuscript_missing` | No DOCX/PDF found in the project root or `Manuscript/`. Put one there, or pass its path. |
-| `manuscript_ambiguous` | More than one possible manuscript was found. Keep one, or pass the exact path. |
+| `manuscript_ambiguous` | More than one possible manuscript was found. Keep one, or pass the exact path (`paperchain import PATH`, or `paperchain organize --manuscript PATH`). |
+| `organize_failed` | `organize --apply` could not move a file. Close it if it is open, then run the command again; already-moved files are not moved twice. |
+| `organize_missing` (warning) | A planned file disappeared between the plan and `--apply`. Re-run `paperchain organize` to refresh the plan. |
 | `manuscript_outside_project` | The original must stay inside the project so its hash can be checked later. |
-| `paper_exists` | `Paper/paper.md` already has your edits. Edit it directly, or pass `--force` to replace it from the original. |
-| `manuscript_hash_mismatch` | The original changed after import. Re-run `paperchain import --force`, then review the Markdown before building. |
+| `paper_exists` | `Paper/paper.md` already has your edits. Edit it directly, or pass `--force` to replace it from the original (the current draft is saved as `paper.md.bak`). |
+| `manuscript_hash_mismatch` | The original changed after import. Re-run `paperchain import --force` (the current draft is saved as `paper.md.bak`), then review the Markdown before building. |
+| `manuscript_unhashed` | `[manuscript]` has a path but no `sha256`, so a replacement cannot be detected. Run `paperchain import --force` to record the hash. |
 | `pandoc_missing` | DOCX import needs Pandoc. Install it, or export the manuscript as PDF/TXT for a plain-text import. |
 | `unsupported_manuscript` | Only DOCX, PDF, MD and TXT manuscripts are imported. |
 | `manuscript_empty` | The imported file has no text. A scanned PDF needs OCR first. |
@@ -58,7 +61,8 @@ Generated text, page maps, `INDEX.md`, manuscript media and build temp files liv
 | `pdf_blank_pages` (warning) | Some pages have no text. Quotes from those pages cannot be verified. |
 | `docx_unreadable` | Not a real `.docx`, or a corrupt zip. Re-export it. |
 | `docx_footnotes_ignored` (warning) | Footnotes are not extracted in this version. Move needed text into the body. |
-| `docx_hidden_text_skipped` (warning) | Runs marked hidden were skipped. A reader cannot see them, so they are not citable. |
+| `docx_hidden_text_skipped` (warning) | Runs marked hidden were skipped, whether the formatting was direct or came from a character or paragraph style. A reader cannot see them, so they are not citable. |
+| `docx_styles_ignored` (warning) | `word/styles.xml` could not be parsed, so style-based hidden text was not skipped. Re-export the file. |
 | `docx_textbox_skipped` (warning) | Text inside text boxes was skipped. Move it into the body to cite it. |
 | `docx_too_large` | The compressed document expands past the 32 MB XML limit. Export a text-only copy. |
 | `source_outside_project` | A file under `References/` is a link to a target outside the folder. Copy the file in instead. |
@@ -66,6 +70,7 @@ Generated text, page maps, `INDEX.md`, manuscript media and build temp files liv
 | `key_collision` | Two files map to the same key. Rename one, for example `study-2024.pdf` and `study-2024-supplement.pdf`. Files in different subfolders normally avoid this because the folder becomes a key prefix. |
 | `unknown_source` | `convert --only KEY` and no file has that key. |
 | `project_locked` | The reference set is locked. Run `paperchain unlock`, convert, then `paperchain lock`. |
+| `convert_changes` | A reference changed since it was last converted. Inspect it, then re-run `convert --accept-changes` to bless the new bytes. |
 | `lock_failed` | A source is missing or was never converted. Run `convert` first. |
 | `file_read_only` | Writing to a locked file. Unlock first, and only if you mean to. |
 | `permission_failed` | The OS refused a permission change. Close the file in Word or Explorer, or check ownership. |
@@ -98,13 +103,15 @@ Generated text, page maps, `INDEX.md`, manuscript media and build temp files liv
 | `citation_without_quote` (warning) | The citation has a page but no evidence. `--strict` makes this an error. |
 | `citation_without_page` (warning) | The citation has no page. Add one for factual claims. |
 | `citation_malformed` | The bracket does not match the syntax. See `AGENTS.md`. |
-| `citation_unrecognized` | Something looks like a citation but is not the supported form: `[see @key]`, `[-@key]`, a bare `@key`, or a bracketed `@@key`. It is an error rather than ignored, because otherwise the citation escapes verification. |
+| `citation_unrecognized` | Something looks like a citation but is not the supported form: `[see @key]`, `[-@key]`, a bare `@key`, a bracketed `@@key`, an HTML entity such as `[&#64;key]`, an escaped `[\@key]`, or an escaped bracket. Pandoc renders these as citation-shaped text, so they are errors rather than ignored. |
 | `multiple_citations` | One citation per bracket: `[@a, p. 1] [@b, p. 2]`. |
 | `unterminated_comment` | An HTML comment is never closed, so everything after it is invisible to `check`. Close it. |
 | `unterminated_code_block` | A fenced code block is never closed. Close it; a fence indented four or more spaces is not a fence. |
-| `placeholder` | `TODO`, `TKTK`, `FIXME`, `XXX`, `[[` or `lorem ipsum` is still in the draft. |
+| `placeholder` | `TODO`, `TKTK`, `FIXME`, `[[` or `lorem ipsum` is still in the draft. `XXX` counts only when it stands alone on a line or sits in brackets, so text such as "Super Bowl XXX" is left alone. |
 | `unused_source` (warning) | A converted source is never cited. |
 | `candidate_pending` (warning) | A proposal in `Candidates/` was never approved or deleted. |
+| `source_metadata_unconfirmed` (warning) | A source has no authors or year, or the file metadata named a placeholder such as "Administrator". Set `authors` and `year` in `paper.toml` so the citation and reference list name the work. |
+| `source_metadata_mismatch` (warning) | The `paper.toml` title and the CSL JSON entry under the same key look like different works. |
 
 ## "The quote is right there, but check says it is not"
 
@@ -124,6 +131,7 @@ If extraction is unusable, quote a shorter span that did extract cleanly, or ask
 | --- | --- |
 | `pandoc_missing` | Install pandoc. |
 | `pandoc_failed` | Pandoc rejected the markdown. The hint contains its stderr. Run the same command by hand in `Paper/` to see the full message. |
+| `pandoc_resource_blocked` | `build` runs Pandoc with `--sandbox`, and an image or file could not be read: it is outside the project, or it is a remote URL. Move it under `Paper/` and use a relative path. |
 | `reference_doc_missing` | `[build] reference_doc` points at a file that does not exist. Fix the path or remove the line. |
 | `build_no_output` | Pandoc reported success but wrote nothing. Check disk space and antivirus. |
 | `invalid_output` | `[build] output` points outside `Output/`. Use a relative path such as `Output/paper.docx`. |

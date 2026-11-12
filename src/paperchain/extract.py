@@ -174,14 +174,74 @@ def _attribute(element, name: str) -> str | None:
     return None
 
 
-def _run_is_hidden(run) -> bool:
+def _vanish(element) -> bool:
+    return _attribute(element, "val") not in {"0", "false", "off"}
+
+
+def _parse_styles(xml: bytes) -> tuple[set[str], set[str]]:
+    """Resolve style-based hidden text from word/styles.xml.
+
+    A run can be hidden by a character style, and a whole paragraph by a
+    paragraph style. Either may inherit ``vanish`` through ``basedOn``.
+    """
+    root = ElementTree.fromstring(xml)
+    raw: dict[str, tuple[str, str | None, bool | None]] = {}
+    for style in root.iter():
+        if _local(style.tag) != "style":
+            continue
+        style_id = _attribute(style, "styleId")
+        if not style_id:
+            continue
+        style_type = _attribute(style, "type") or ""
+        based_on: str | None = None
+        vanish: bool | None = None
+        for child in style:
+            name = _local(child.tag)
+            if name == "basedOn":
+                based_on = _attribute(child, "val")
+            elif name == "rPr":
+                for prop in child:
+                    if _local(prop.tag) == "vanish":
+                        vanish = _vanish(prop)
+        raw[style_id] = (style_type, based_on, vanish)
+
+    resolved: dict[str, bool] = {}
+
+    def hidden(style_id: str, seen: frozenset[str] = frozenset()) -> bool:
+        if style_id in resolved:
+            return resolved[style_id]
+        if style_id in seen or style_id not in raw:
+            return False
+        style_type, based_on, vanish = raw[style_id]
+        if vanish is not None:
+            result = vanish
+        elif based_on:
+            result = hidden(based_on, seen | {style_id})
+        else:
+            result = False
+        resolved[style_id] = result
+        return result
+
+    characters = {key for key, value in raw.items() if value[0] == "character" and hidden(key)}
+    paragraphs = {key for key, value in raw.items() if value[0] == "paragraph" and hidden(key)}
+    return characters, paragraphs
+
+
+def _run_is_hidden(run, character_styles: set[str]) -> bool:
+    direct: bool | None = None
+    style: str | None = None
     for child in run:
         if _local(child.tag) != "rPr":
             continue
         for prop in child:
-            if _local(prop.tag) == "vanish":
-                return _attribute(prop, "val") not in {"0", "false", "off"}
-    return False
+            name = _local(prop.tag)
+            if name == "vanish":
+                direct = _vanish(prop)
+            elif name == "rStyle":
+                style = _attribute(prop, "val")
+    if direct is not None:
+        return direct
+    return bool(style and style in character_styles)
 
 
 def _append_run_text(run, chunks: list[str]) -> None:
@@ -204,9 +264,19 @@ def _append_run_text(run, chunks: list[str]) -> None:
     walk(run)
 
 
-def _paragraph_text(paragraph) -> tuple[str, bool]:
+def _paragraph_text(
+    paragraph, character_styles: set[str], paragraph_styles: set[str]
+) -> tuple[str, bool]:
     chunks: list[str] = []
     hidden = False
+
+    for child in paragraph:
+        if _local(child.tag) != "pPr":
+            continue
+        for prop in child:
+            if _local(prop.tag) == "pStyle":
+                if _attribute(prop, "val") in paragraph_styles:
+                    return "", True
 
     def walk(element) -> None:
         nonlocal hidden
@@ -215,7 +285,7 @@ def _paragraph_text(paragraph) -> tuple[str, bool]:
             if name == "txbxContent":
                 continue
             if name == "r":
-                if _run_is_hidden(child):
+                if _run_is_hidden(child, character_styles):
                     hidden = True
                 else:
                     _append_run_text(child, chunks)
@@ -243,7 +313,20 @@ def _extract_docx(path: Path) -> Extraction:
                     f"{path.name} expands to {info.file_size} bytes of XML",
                     hint="export a text-only copy; this file is too large to read safely",
                 )
+            if "word/styles.xml" in names:
+                styles_info = archive.getinfo("word/styles.xml")
+                if styles_info.file_size > MAX_DOCX_XML:
+                    raise PaperchainError(
+                        "docx_too_large",
+                        f"{path.name} expands to {styles_info.file_size} bytes of style XML",
+                        hint="export a text-only copy; this file is too large to read safely",
+                    )
             xml = archive.read("word/document.xml")
+            styles_xml = (
+                archive.read("word/styles.xml")
+                if "word/styles.xml" in names
+                else None
+            )
             has_footnotes = "word/footnotes.xml" in names
     except (zipfile.BadZipFile, KeyError) as exc:
         raise PaperchainError(
@@ -256,6 +339,23 @@ def _extract_docx(path: Path) -> Extraction:
         root = ElementTree.fromstring(xml)
     except ElementTree.ParseError as exc:
         raise PaperchainError("docx_unreadable", f"{path.name} has invalid XML: {exc}") from exc
+
+    style_warnings: list[Finding] = []
+    character_styles: set[str] = set()
+    paragraph_styles: set[str] = set()
+    if styles_xml is not None:
+        try:
+            character_styles, paragraph_styles = _parse_styles(styles_xml)
+        except ElementTree.ParseError:
+            style_warnings.append(
+                Finding(
+                    "docx_styles_ignored",
+                    "word/styles.xml is not valid XML; style-based hidden text was not skipped",
+                    severity="warning",
+                    file=path.name,
+                    hint="re-export the file; if a quote comes from hidden text, check will accept it",
+                )
+            )
 
     body = next((child for child in root if _local(child.tag) == "body"), None)
     if body is None:
@@ -272,7 +372,9 @@ def _extract_docx(path: Path) -> Extraction:
             if name == "txbxContent":
                 continue
             if name == "p":
-                text, hidden = _paragraph_text(child)
+                text, hidden = _paragraph_text(
+                    child, character_styles, paragraph_styles
+                )
                 hidden_seen = hidden_seen or hidden
                 if text:
                     paragraphs.append(text)
@@ -288,7 +390,7 @@ def _extract_docx(path: Path) -> Extraction:
             hint="Word files made only of images need OCR or a text export",
         )
 
-    warnings: list[Finding] = []
+    warnings: list[Finding] = list(style_warnings)
     if has_footnotes:
         warnings.append(
             Finding(

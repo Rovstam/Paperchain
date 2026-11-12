@@ -67,7 +67,7 @@ def run_lock(project: Project, accept_changes: bool = False) -> dict:
             continue
         if str(payload.get("sha256", "")) != source_hashes[source.key]:
             problems.append(
-                f"{source.key}: converted text was built from a different original; run `convert --force`"
+                f"{source.key}: converted text was built from a different original; run `convert --force --accept-changes`"
             )
             continue
         try:
@@ -77,7 +77,7 @@ def run_lock(project: Project, accept_changes: bool = False) -> dict:
             continue
         if fresh.pages != pages:
             problems.append(
-                f"{source.key}: converted text does not match a fresh extraction; run `convert --force`"
+                f"{source.key}: converted text does not match a fresh extraction; run `convert --force --accept-changes`"
             )
             continue
         expected = render_text_file(
@@ -95,7 +95,7 @@ def run_lock(project: Project, accept_changes: bool = False) -> dict:
             actual_txt = None
         if actual_txt != expected:
             problems.append(
-                f"{source.key}: .txt does not match the converted page map; run `convert --force`"
+                f"{source.key}: .txt does not match the converted page map; run `convert --force --accept-changes`"
             )
 
     if problems:

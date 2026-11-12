@@ -8,7 +8,7 @@ from typing import Any
 from .errors import Finding, PaperchainError
 from .extract import extract
 from .project import Project
-from .util import now_iso, rel_posix, sha256_file, word_count
+from .util import backup_path, now_iso, rel_posix, sha256_file, word_count
 
 DOCX_SUFFIXES = {".docx"}
 PLAIN_SUFFIXES = {".md", ".markdown", ".txt"}
@@ -133,17 +133,24 @@ def run_import(
             hint="copy the original into the project so the import hash can be checked later",
         )
 
-    if project.paper_md.exists() and not force:
+    existing = ""
+    if project.paper_md.exists():
         try:
             existing = project.paper_md.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             existing = ""
-        if "paperchain:template" not in existing:
+        if not force and "paperchain:template" not in existing:
             raise PaperchainError(
                 "paper_exists",
                 "Paper/paper.md already exists",
-                hint="edit it directly, or pass --force to replace it from the original manuscript",
+                hint="edit it directly, or pass --force to replace it from the original manuscript (the current draft is saved as paper.md.bak)",
             )
+
+    backups: list[str] = []
+    if force and existing and "paperchain:template" not in existing:
+        saved = backup_path(project.paper_md)
+        if saved is not None:
+            backups.append(project.relative(saved))
 
     project.paper_dir.mkdir(parents=True, exist_ok=True)
     warnings: list[Finding] = []
@@ -181,5 +188,6 @@ def run_import(
         "paper": project.relative(project.paper_md),
         "sha256": digest,
         "words": word_count(text),
+        "backups": backups,
         "warnings": warnings,
     }

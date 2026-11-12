@@ -18,9 +18,12 @@ def help_data() -> dict[str, Any]:
                 ],
             },
             {
-                "title": "2. Put the files in place",
-                "text": "Put the original DOCX or PDF in Manuscript/ or in the project root. Put reference PDFs/DOCX under References/. Subfolders are allowed; loose PDF/DOCX files are moved into their own folders by convert.",
-                "commands": [],
+                "title": "2. Sort the files that are already there",
+                "text": "If the folder already had a manuscript, reference folders or notes, `organize` sorts them: the original moves to Manuscript/, reference PDFs/DOCX move to References/, and everything else moves to Dump/. The plan is printed first and changes nothing; --apply performs the moves. Nothing is deleted, and name collisions go to Dump/conflicts/.",
+                "commands": [
+                    "paperchain organize",
+                    "paperchain organize --apply",
+                ],
             },
             {
                 "title": "3. Import the manuscript and prepare references",
@@ -47,6 +50,7 @@ def help_data() -> dict[str, Any]:
         ],
         "notes": [
             "The original DOCX/PDF is never modified.",
+            "`organize` moves files; it never deletes. Without --apply it is read-only.",
             "Generated text, images and temp files live outside the project; paperchain doctor --json reports the cache paths under data.cache.",
             "References/library.json is an optional CSL JSON export from Zotero. When present, build uses it for citations and the bibliography.",
             "Agents: run `paperchain help --json` and relay data.steps. Do not scan unrelated folders to answer a how-to question.",

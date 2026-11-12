@@ -95,13 +95,22 @@ def run_doctor(project: Project) -> dict:
                     "restore the original, or run `paperchain import` again",
                 )
             )
-        elif manifest.manuscript_sha256 and sha256_file(manuscript) != manifest.manuscript_sha256:
+        elif not manifest.manuscript_sha256:
+            checks.append(
+                Check(
+                    "manuscript",
+                    "fail",
+                    f"{manifest.manuscript_path} has no recorded hash",
+                    "run `paperchain import --force` (the current draft is saved as paper.md.bak)",
+                )
+            )
+        elif sha256_file(manuscript) != manifest.manuscript_sha256:
             checks.append(
                 Check(
                     "manuscript",
                     "fail",
                     f"{manifest.manuscript_path} changed since import",
-                    "run `paperchain import --force`, then review Paper/paper.md",
+                    "run `paperchain import --force` (the current draft is saved as paper.md.bak), then review Paper/paper.md",
                 )
             )
         else:
@@ -152,7 +161,7 @@ def run_doctor(project: Project) -> dict:
                 "agent adapter",
                 "warn",
                 "none detected",
-                "AGENTS.md still works on its own; re-run `paperchain init --force --agent opencode` to add one",
+                "AGENTS.md still works on its own; re-run `paperchain init --force --agent opencode` to add one (the draft is saved as paper.md.bak)",
             )
         )
 
