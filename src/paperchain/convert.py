@@ -12,8 +12,8 @@ from .extract import (
     render_text_file,
 )
 from .manifest import Source
-from .project import Project
-from .util import now_iso, rel_posix, sha256_file
+from .project import Project, category_name
+from .util import now_iso, rel_posix, sha256_file, shorten_key, sha256_text
 
 # File metadata often names the person who installed the software, not the
 # author of the work. Treat these as "unknown" instead of printing them as an
@@ -63,8 +63,14 @@ def _scan_references(project: Project) -> list[Path]:
     return files
 
 
-def organize_loose_references(project: Project) -> tuple[list[str], list[Finding]]:
-    """Move loose PDF/DOCX files into References/<key>/<file>.
+def organize_loose_references(
+    project: Project, into: str | None = None
+) -> tuple[list[str], list[Finding]]:
+    """Move loose PDF/DOCX files out of the References root.
+
+    Without `into` each file goes to `References/<key>/<file>`. With a
+    category, the files go to `References/<category>/<file>` instead, so the
+    reference tree keeps the subject folders the human or agent chose.
 
     Only files directly in References/ are moved. Nested files, legacy
     References/originals/ layouts and bibliography exports are left alone.
@@ -74,13 +80,16 @@ def organize_loose_references(project: Project) -> tuple[list[str], list[Finding
     if not project.references_dir.is_dir():
         return moved, warnings
 
+    category = category_name(into) if into else ""
     for path in sorted(project.references_dir.iterdir()):
         if not path.is_file() or path.name.startswith("."):
             continue
         if path.suffix.lower() not in {".pdf", ".docx"}:
             continue
         key = project.reference_key(path)
-        target_dir = project.references_dir / key
+        target_dir = (
+            project.references_dir / category if category else project.references_dir / key
+        )
         target = target_dir / path.name
         if target.exists():
             warnings.append(
@@ -105,6 +114,53 @@ def organize_loose_references(project: Project) -> tuple[list[str], list[Finding
     return moved, warnings
 
 
+def _assign_keys(project: Project, files: list[Path]) -> tuple[dict[str, Path], list[str]]:
+    """Map each reference file to a unique, typeable key.
+
+    The normal key is used when it is free. If two files would get the same
+    key, candidates that include more of the folder path are tried. An
+    existing path keeps the key it already has, so adding a new file does not
+    rename old citations.
+    """
+    rel_paths = {path: rel_posix(path, project.root) for path in files}
+    manifest_paths = {source.path: source.key for source in project.manifest.sources}
+    manifest_keys = {source.key: source.path for source in project.manifest.sources}
+    base_keys = {path: project.reference_key(path) for path in files}
+    counts: dict[str, int] = {}
+    for key in base_keys.values():
+        counts[key] = counts.get(key, 0) + 1
+
+    keyed: dict[str, Path] = {}
+    collisions: list[str] = []
+    for path in files:
+        rel = rel_paths[path]
+        existing = manifest_paths.get(rel)
+        candidates: list[str] = [existing] if existing else []
+        expanded = project.reference_key_candidates(path)
+        if existing is None and counts[base_keys[path]] > 1:
+            # Both files would start with the same key, so both use the
+            # expanded form and the result does not depend on which came first.
+            candidates.extend(expanded[1:])
+        else:
+            candidates.extend(expanded)
+        candidates.append(shorten_key(f"{base_keys[path]}-{sha256_text(rel)[:8]}"))
+
+        chosen = None
+        for candidate in candidates:
+            if not candidate or candidate in keyed:
+                continue
+            if candidate in manifest_keys and manifest_keys[candidate] != rel:
+                continue
+            chosen = candidate
+            break
+        if chosen is None:
+            collisions.append(f"{rel} cannot get a unique key; rename the file")
+            continue
+        keyed[chosen] = path
+
+    return keyed, collisions
+
+
 def run_convert(
     project: Project,
     force: bool = False,
@@ -112,6 +168,7 @@ def run_convert(
     prune: bool = False,
     organize: bool = True,
     accept_changes: bool = False,
+    into: str | None = None,
 ) -> dict:
     manifest = project.manifest
     if manifest.locked_at:
@@ -120,11 +177,17 @@ def run_convert(
             "the reference set is locked; conversion would rewrite hashed files",
             hint="run `paperchain unlock`, convert, then `paperchain lock`",
         )
+    if into and (not organize or only):
+        raise PaperchainError(
+            "conflicting_options",
+            "--into moves loose files, but the loose-file organizer is disabled",
+            hint="drop --no-organize/--only, or run `paperchain organize --into CATEGORY --apply` first",
+        )
 
     moved: list[str] = []
     warnings: list[Finding] = []
     if organize and not only:
-        moved, warnings = organize_loose_references(project)
+        moved, warnings = organize_loose_references(project, into=into)
 
     files = _scan_references(project)
     supported = [path for path in files if path.suffix.lower() in SUPPORTED_SUFFIXES]
@@ -142,20 +205,7 @@ def run_convert(
     )
 
     # Map files to keys and refuse ambiguous names before writing anything.
-    keyed: dict[str, Path] = {}
-    collisions: list[str] = []
-    for path in supported:
-        key = project.reference_key(path)
-        if key in keyed:
-            collisions.append(f"{keyed[key].name} and {path.name} both map to key {key!r}")
-            continue
-        existing = manifest.source(key)
-        if existing and existing.path != rel_posix(path, project.root):
-            collisions.append(
-                f"{path.name} wants key {key!r}, already used by {existing.path}"
-            )
-            continue
-        keyed[key] = path
+    keyed, collisions = _assign_keys(project, supported)
     if collisions:
         raise PaperchainError(
             "key_collision",
@@ -300,6 +350,7 @@ def run_convert(
             "sources": len(manifest.sources),
             "originals": len(supported),
             "moved": moved,
+            "into": category_name(into) if into else "",
             "cache": str(project.cache_dir),
             "index": str(project.text_dir / "INDEX.md"),
         },

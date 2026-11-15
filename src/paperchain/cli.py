@@ -17,6 +17,7 @@ from .help_cmd import help_data
 from .import_cmd import run_import
 from .init_cmd import run_init
 from .locking import run_lock, run_unlock
+from .match_cmd import run_match
 from .organize import run_organize
 from .project import Project
 
@@ -89,6 +90,7 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
             force=args.force,
             git=args.git,
             adopt=args.adopt,
+            style=args.style or "",
         )
         verb = "adopted" if result["data"].get("adopted") else "created"
         summary = f'{verb} "{result["title"]}" in {result["root"]} (adapter: {result["adapter"]})'
@@ -108,6 +110,7 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
             manuscript=args.manuscript,
             references=args.reference,
             dumps=args.dump,
+            into=args.into,
         )
         moves = result["data"]["moves"]
         counts = result["data"]["counts"]
@@ -158,6 +161,7 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
             prune=args.prune,
             organize=not args.no_organize,
             accept_changes=args.accept_changes,
+            into=args.into,
         )
         parts = [f"converted {len(result['converted'])}"]
         parts.append(f"skipped {len(result['skipped'])}")
@@ -181,6 +185,36 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
         if result["changes"]:
             summary += f" (accepted {len(result['changes'])} change(s))"
         return _envelope(command, True, summary, data=result["data"])
+
+    if command == "match":
+        project = _project(args)
+        result = run_match(project, apply=args.apply, overwrite=args.overwrite)
+        suggestions = [row for row in result["sources"] if row["status"] == "suggestion"]
+        summary = (
+            f"matched {len(result['matched'])} source(s), kept {len(result['kept'])}, "
+            f"{len(result['unmatched'])} unmatched, {len(result['ambiguous'])} ambiguous, "
+            f"{len(suggestions)} suggestion(s)"
+        )
+        if suggestions:
+            summary += "; suggestions are not applied, confirm a citation_key by hand"
+        if not args.apply and result["matched"]:
+            summary += "; re-run with --apply to write citation_key into paper.toml"
+        elif result["applied"]:
+            summary += "; paper.toml updated"
+        return _envelope(
+            command,
+            True,
+            summary,
+            warnings=result["warnings"],
+            data={
+                "sources": result["sources"],
+                "matched": len(result["matched"]),
+                "kept": len(result["kept"]),
+                "unmatched": [row["key"] for row in result["unmatched"]],
+                "ambiguous": [row["key"] for row in result["ambiguous"]],
+                "applied": result["applied"],
+            },
+        )
 
     if command == "unlock":
         project = _project(args)
@@ -321,6 +355,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="keep existing files and add only the missing project files",
     )
+    p_init.add_argument(
+        "--style",
+        choices=["vancouver"],
+        help="pin the citation style in paper.toml; check and build then refuse to fall back to another style",
+    )
     p_init.add_argument("--git", action="store_true", help="run git init in the new project")
 
     p_organize = sub.add_parser(
@@ -353,6 +392,11 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="an extra file or folder to treat as working material (repeatable)",
     )
+    p_organize.add_argument(
+        "--into",
+        metavar="CATEGORY",
+        help="put loose references in this References/ subfolder (created if missing)",
+    )
 
     p_import = sub.add_parser(
         "import",
@@ -382,7 +426,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_convert.add_argument(
         "--no-organize",
         action="store_true",
-        help="leave loose PDF/DOCX files directly in References/ instead of moving each into its own folder",
+        help="leave loose PDF/DOCX files directly in References/ instead of moving them",
+    )
+    p_convert.add_argument(
+        "--into",
+        metavar="CATEGORY",
+        help="move loose PDF/DOCX files into this References/ subfolder instead of References/<key>/",
     )
     p_convert.add_argument(
         "--accept-changes",
@@ -404,6 +453,23 @@ def build_parser() -> argparse.ArgumentParser:
         "unlock",
         parents=[common],
         help="make references writable again (human only)",
+    )
+
+    p_match = sub.add_parser(
+        "match",
+        parents=[common],
+        help="map Zotero/Better BibTeX ids onto sources by title",
+        description="Pair each source with a CSL JSON entry and record its citation_key. Reports unmatched, ambiguous and duplicate-title cases; --apply writes paper.toml.",
+    )
+    p_match.add_argument(
+        "--apply",
+        action="store_true",
+        help="write citation_key into paper.toml; without it, print the plan",
+    )
+    p_match.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="re-match sources that already have a citation_key",
     )
 
     p_check = sub.add_parser(
@@ -504,6 +570,13 @@ def print_human(payload: dict[str, Any]) -> None:
             print(f"  ... and {len(moves) - 60} more")
         for candidate in data.get("candidates") or []:
             print(f"  candidate manuscript: {candidate}")
+    if payload["command"] == "match":
+        for row in data.get("sources", []):
+            candidates = row.get("candidates") or []
+            target = row.get("citation_key") or (candidates[0] if candidates else "-")
+            print(f"  {row['status']:<10} {row['key']} -> {target}")
+            if row["status"] in {"ambiguous", "suggestion"} and candidates:
+                print(f"        candidates: {', '.join(candidates)}")
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -28,4 +28,5 @@ Candidates/*.epub
 
 # Build scratch
 Paper/.paperchain.build.md
+Paper/.paperchain-build-media/
 *.tmp

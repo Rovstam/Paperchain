@@ -14,6 +14,12 @@ from .helpers import write_pdf
 @pytest.fixture(autouse=True)
 def _isolated_cache(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("PAPERCHAIN_CACHE_DIR", str(tmp_path / "paperchain-cache"))
+    yield
+
+
+@pytest.fixture
+def no_links(monkeypatch):
+    """Opt out of the junction/symlink layout for tests that need a real folder."""
     monkeypatch.setenv("PAPERCHAIN_NO_LINKS", "1")
     yield
 

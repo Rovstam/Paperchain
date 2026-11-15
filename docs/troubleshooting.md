@@ -20,7 +20,7 @@ Every error has a stable code in the JSON output. Use the code, not the prose, w
 | --- | --- |
 | `project_not_found` | No `paper.toml` in this folder or a parent. Pass `--project DIR` or run `paperchain init`. |
 | `manifest_missing` | `paper.toml` was deleted. Restore it; the hashes cannot be rebuilt without it. |
-| `manifest_invalid` | TOML is malformed, a key is not a lowercase slug, a key is duplicated, or a `path` is absolute or resolves outside `References/`. |
+| `manifest_invalid` | TOML is malformed, a source key is not a lowercase slug, a key is duplicated, a `path` is absolute or resolves outside `References/`, or `[build] reference_doc`, `bibliography` or `csl` is absolute or outside the project. |
 | `manifest_version` | The project was written by a newer paperchain. Upgrade the tool. |
 | `already_initialized` | `init` found a `paper.toml`. Use `--force` only if you mean to overwrite template files. |
 | `destination_not_empty` | Choose an empty folder, pass `--adopt` to keep existing files, or pass `--force` to overwrite template files. |
@@ -48,7 +48,12 @@ Generated text, page maps, `INDEX.md`, manuscript media and build temp files liv
 | `import_failed` | Pandoc could not read the DOCX. Re-export it and try again. |
 | `pdf_import_plain_text` (warning) | A PDF manuscript is imported as plain paragraphs; headings and images are not reconstructed. |
 | `bibliography_missing` / `bibliography_invalid` | `References/library.json` is absent or not CSL JSON. Export it again from Zotero. |
-| `citation_not_in_bibliography` | A citation key is not in the CSL JSON. Add the item in Zotero, export again, or fix the key. |
+| `bibliography_bibtex_unsupported` | The only bibliography is `References/library.bib` (BibTeX), or `[build] bibliography` points at one. Paperchain reads CSL JSON: `pandoc -f bibtex -t csljson References/library.bib -o References/library.json`, then set `bibliography = "References/library.json"`. If Pandoc stops at `@misc{,` or another empty key, give those Zotero items a key first, then export again. |
+| `bibliography_duplicate_id` | Two CSL entries share an id. It is an error when a source or citation uses the id, because Paperchain and citeproc may choose different entries; an unused duplicate is a warning. Give each item a unique Better BibTeX key and re-export. |
+| `bibliography_entry_unmatched` (warning) | One or more CSL entries have no source. Run `paperchain match`, or add and convert the PDF. |
+| `citation_not_in_bibliography` | The source's `citation_key` (or its key) is not in the CSL JSON, or Pandoc reported that citeproc could not resolve it during `build`. Keys must start and end with a letter or digit; Pandoc treats a trailing `. : / + -` as punctuation outside the key. Run `paperchain match --apply`, fix the key, or add the item in Zotero and re-export. |
+| `front_matter_overrides_citations` | A YAML metadata block in `Paper/paper.md` sets a key outside the document-metadata allow-list (`title`, `author`, `date`, `abstract`, `keywords`, `lang`, ...). Pandoc accepts such a block anywhere in the document, including a blockquote or list item. `references:`, `suppress-bibliography`, `bibliography`, `csl`, `nocite` and unknown keys are rejected. Remove the key; citations and the bibliography belong in `paper.toml` or the Zotero export. |
+| `bibliography_missing_from_output` | The built document cites sources but has no reference list. Delete citation-changing YAML from anywhere in `paper.md` and rebuild. Detection uses citeproc's `Bibliography` paragraph style; ordinary prose containing the word "references" does not count. |
 
 ## References and conversion
 
@@ -67,11 +72,13 @@ Generated text, page maps, `INDEX.md`, manuscript media and build temp files liv
 | `docx_too_large` | The compressed document expands past the 32 MB XML limit. Export a text-only copy. |
 | `source_outside_project` | A file under `References/` is a link to a target outside the folder. Copy the file in instead. |
 | `source_unreadable` | A path could not be resolved, usually a broken link. |
-| `key_collision` | Two files map to the same key. Rename one, for example `study-2024.pdf` and `study-2024-supplement.pdf`. Files in different subfolders normally avoid this because the folder becomes a key prefix. |
+| `key_collision` | Two files still map to the same key after the folder path is added. Rename one, for example `study-2024.pdf` and `study-2024-supplement.pdf`. |
+| `invalid_category` | `--into` needs one folder name, without slashes or a drive letter. |
+| `conflicting_options` | `--into` was used with `--no-organize` or `--only`, so no loose file could be moved. |
 | `unknown_source` | `convert --only KEY` and no file has that key. |
 | `project_locked` | The reference set is locked. Run `paperchain unlock`, convert, then `paperchain lock`. |
 | `convert_changes` | A reference changed since it was last converted. Inspect it, then re-run `convert --accept-changes` to bless the new bytes. |
-| `lock_failed` | A source is missing or was never converted. Run `convert` first. |
+| `lock_failed` | A source is missing, was never converted, or a configured style's export/CSL file is missing. For a style project the hint names the style files; otherwise run `convert` first. |
 | `file_read_only` | Writing to a locked file. Unlock first, and only if you mean to. |
 | `permission_failed` | The OS refused a permission change. Close the file in Word or Explorer, or check ownership. |
 
@@ -95,7 +102,11 @@ Generated text, page maps, `INDEX.md`, manuscript media and build temp files liv
 
 | Code | Meaning |
 | --- | --- |
-| `unknown_citation_key` | The key is not in `paper.toml`. Add the file and convert, or fix the key. |
+| `unknown_citation_key` | The key is neither a source key nor a `citation_key`. Add the file and convert, run `paperchain match`, or fix the key. |
+| `citation_key_unmatched` (warning) | `paperchain match` could not find any CSL entry whose title agrees with a source. Check that the PDF is the work the Zotero item names, or set `citation_key` by hand. |
+| `citation_key_ambiguous` (warning) | More than one CSL entry matches a source title, an exact title is duplicated, or the candidate id is not a valid citation key (for example it ends in `.`). `match` does not guess or write an invalid key; set `citation_key` by hand or fix the Zotero id. |
+| `citation_key_no_title` (warning) | A source has no title, so it cannot be matched. Set `title` in `paper.toml` or set `citation_key` by hand. |
+| `bibliography_duplicate_title` (warning) | Several CSL entries share a title, so title matching cannot choose. Set `citation_key` by hand. |
 | `page_out_of_range` | The source has fewer pages than the citation claims. |
 | `quote_not_found` | The quoted words are not anywhere in the source. Usually a copy error, or an extraction problem. |
 | `quote_wrong_page` | The quote exists, on a different page. The error names the page. |
@@ -111,7 +122,9 @@ Generated text, page maps, `INDEX.md`, manuscript media and build temp files liv
 | `unused_source` (warning) | A converted source is never cited. |
 | `candidate_pending` (warning) | A proposal in `Candidates/` was never approved or deleted. |
 | `source_metadata_unconfirmed` (warning) | A source has no authors or year, or the file metadata named a placeholder such as "Administrator". Set `authors` and `year` in `paper.toml` so the citation and reference list name the work. |
-| `source_metadata_mismatch` (warning) | The `paper.toml` title and the CSL JSON entry under the same key look like different works. |
+| `source_metadata_mismatch` | The `paper.toml` title and the CSL JSON entry under the same key describe different works. It is an error once `citation_key` is set, because citeproc will print that entry; without a key it is a warning. |
+
+`paperchain match` also reports a `suggestion` status when the titles only contain one another, for example a PDF title of "Cancer" inside "Cancer immunotherapy review 2020". A suggestion is not applied by `--apply`; confirm the entry and set `citation_key` by hand.
 
 ## "The quote is right there, but check says it is not"
 
@@ -131,8 +144,13 @@ If extraction is unusable, quote a shorter span that did extract cleanly, or ask
 | --- | --- |
 | `pandoc_missing` | Install pandoc. |
 | `pandoc_failed` | Pandoc rejected the markdown. The hint contains its stderr. Run the same command by hand in `Paper/` to see the full message. |
-| `pandoc_resource_blocked` | `build` runs Pandoc with `--sandbox`, and an image or file could not be read: it is outside the project, or it is a remote URL. Move it under `Paper/` and use a relative path. |
-| `reference_doc_missing` | `[build] reference_doc` points at a file that does not exist. Fix the path or remove the line. |
+| `pandoc_resource_blocked` | An image path is absolute, outside `Paper/`, a non-image `data:` URI, remote, or missing. Move it under `Paper/` and use a relative path. An image `data:image/...` URI is accepted because it is self-contained. `build` validates both the Markdown/HTML source and Pandoc's own AST, so reference-style images (`![a][id]`), percent-encoded names, code examples and indented code are covered. |
+| `style_requires_bibliography` / `style_requires_csl` | `[build] style` is set but `References/library.json` or the CSL file is missing. Export CSL JSON from Zotero; download the NLM/Vancouver CSL from https://www.zotero.org/styles/vancouver into `styles/vancouver.csl`. `lock` refuses to run in this state instead of recording empty hashes. |
+| `csl_not_vancouver` | The CSL file is dependent, is not numeric, has no `<bibliography>` element, or has an id outside the known Vancouver list. A dependent style names its parent in the error; use the independent NLM/Vancouver style from https://www.zotero.org/styles/vancouver. For a confirmed variant with a newer id, add the id to `styles/accepted-csl-ids.txt` beside the CSL file. |
+| `bibliography_hash_mismatch` / `csl_hash_mismatch` | The Zotero export, the CSL file, or the `styles/accepted-csl-ids.txt` sidecar changed after `lock`. Review the change, then `paperchain lock --accept-changes`. |
+| `bibliography_not_locked` / `csl_not_locked` | `lock` ran before the export or the CSL file existed, so it recorded no hash. Run `paperchain lock --accept-changes`. |
+| `pandoc_failed` with `Could not find data file data/data/docx/[Content_Types].xml` | Seen with Debian's packaged pandoc 3.1.3 under the old `--sandbox` build. Current `build` does not use `--sandbox`; if it persists, install a release build from pandoc.org instead of the distro package. |
+| `reference_doc_missing` / `manifest_invalid` | `[build] reference_doc` points at a file that does not exist, or at an absolute path or a path outside the project. Keep the reference DOCX inside the project and use a relative path, or remove the line. |
 | `build_no_output` | Pandoc reported success but wrote nothing. Check disk space and antivirus. |
 | `invalid_output` | `[build] output` points outside `Output/`. Use a relative path such as `Output/paper.docx`. |
 | `paper_missing` / `paper_empty` | `Paper/paper.md` does not exist or is empty. |

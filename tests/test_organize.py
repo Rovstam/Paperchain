@@ -152,6 +152,62 @@ def test_apply_is_idempotent(tmp_path: Path) -> None:
     assert second["data"]["moves"] == []
 
 
+def test_organize_into_moves_a_norm_named_file(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    write_pdf(project.manuscript_dir / "draft.pdf", ["Draft text."])
+    project.manifest.manuscript_path = "Manuscript/draft.pdf"
+    project.save()
+    write_pdf(project.root / "Resolucion 3100 de 2019.pdf", ["Rule text."])
+
+    plan = _by_source(run_organize(project))
+    assert plan["Resolucion 3100 de 2019.pdf"]["target"] == (
+        "Dump/Resolucion 3100 de 2019.pdf"
+    )
+
+    plan = _by_source(
+        run_organize(project, into="Normas, Resoluciones y Normativas")
+    )
+    assert plan["Resolucion 3100 de 2019.pdf"]["target"] == (
+        "References/Normas, Resoluciones y Normativas/Resolucion 3100 de 2019.pdf"
+    )
+
+    run_organize(
+        Project.open(project.root),
+        apply=True,
+        into="Normas, Resoluciones y Normativas",
+    )
+    assert (
+        project.references_dir
+        / "Normas, Resoluciones y Normativas"
+        / "Resolucion 3100 de 2019.pdf"
+    ).is_file()
+
+
+def test_category_file_marks_a_project_folder_as_references(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    category = "Normas, Resoluciones y Normativas"
+    folder = project.root / category
+    folder.mkdir()
+    write_pdf(folder / "Ley 485 de 1998.pdf", ["Rule text."])
+    source = f"{category}/Ley 485 de 1998.pdf"
+
+    plan = _by_source(run_organize(project))
+    assert plan[source]["target"] == f"Dump/{source}"
+
+    project.categories_path.write_text(
+        json.dumps({"categories": [category]}), encoding="utf-8"
+    )
+    plan = _by_source(run_organize(Project.open(project.root)))
+    assert plan[source]["target"] == f"References/{source}"
+
+
+def test_organize_rejects_a_category_that_is_a_path(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    with pytest.raises(PaperchainError) as error:
+        run_organize(project, into="References/Articulos")
+    assert error.value.code == "invalid_category"
+
+
 def test_manuscript_name_conflict_gets_a_new_name(tmp_path: Path) -> None:
     project = make_project(tmp_path)
     write_pdf(project.root / "Manuscript" / "draft.pdf", ["Already here."])

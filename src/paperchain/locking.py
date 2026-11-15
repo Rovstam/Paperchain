@@ -6,6 +6,7 @@ import stat
 
 from .errors import PaperchainError
 from .extract import Extraction, extract, render_text_file
+from .library import bibtex_conversion_hint, style_sha256
 from .project import Project
 from .util import now_iso, sha256_file
 
@@ -98,14 +99,44 @@ def run_lock(project: Project, accept_changes: bool = False) -> dict:
                 f"{source.key}: .txt does not match the converted page map; run `convert --force --accept-changes`"
             )
 
+    if manifest.style:
+        # Locking a style project without the export or the CSL would record an
+        # empty hash and report "locked" while nothing about the style is
+        # protected. Fail instead, like a missing conversion.
+        bibliography = project.bibliography_path
+        if bibliography is None or not bibliography.is_file():
+            problems.append("the style is set but the Zotero export is missing")
+        elif bibliography.suffix.lower() in {".bib", ".bibtex"}:
+            problems.append(
+                "the style is set but the bibliography is BibTeX; "
+                + bibtex_conversion_hint(bibliography)
+            )
+        csl = project.csl_path
+        if csl is None or not csl.is_file():
+            problems.append(f"the style is set but {manifest.csl or 'the CSL file'} is missing")
+
     if problems:
-        raise PaperchainError(
-            "lock_failed",
-            "; ".join(problems),
-            hint="run `paperchain convert` first, and restore any missing originals",
+        style_missing = any(problem.startswith("the style is set but") for problem in problems)
+        hint = (
+            "restore the style files named in the message: export CSL JSON to References/library.json and download the NLM/Vancouver CSL named by [build] csl"
+            if style_missing
+            else "run `paperchain convert` first, and restore any missing originals"
         )
+        raise PaperchainError("lock_failed", "; ".join(problems), hint=hint)
 
     changes: list[str] = []
+    if manifest.style:
+        bibliography = project.bibliography_path
+        bibliography_hash = sha256_file(bibliography) if bibliography and bibliography.is_file() else ""
+        csl = project.csl_path
+        csl_hash = style_sha256(csl)
+        if manifest.bibliography_sha256 and manifest.bibliography_sha256 != bibliography_hash:
+            changes.append("bibliography: the Zotero export changed")
+        if manifest.csl_sha256 and manifest.csl_sha256 != csl_hash:
+            changes.append("csl: the style file or accepted-csl-ids.txt changed")
+    else:
+        bibliography_hash = ""
+        csl_hash = ""
     for source in manifest.sources:
         if source.sha256 and source.sha256 != source_hashes[source.key]:
             changes.append(f"{source.key}: original changed")
@@ -125,6 +156,13 @@ def run_lock(project: Project, accept_changes: bool = False) -> dict:
         source.size = path.stat().st_size
         source.text_sha256 = text_hashes[source.key]
         source.pages = page_counts[source.key]
+
+    # The CSL JSON and the style are hashed, not made read-only: Zotero must be
+    # able to overwrite the export, and a re-export is then reported by check.
+    # Without a configured style they are not part of the lock, so existing
+    # projects keep their previous behaviour.
+    manifest.bibliography_sha256 = bibliography_hash
+    manifest.csl_sha256 = csl_hash
 
     for path in _locked_files(project):
         if path.is_file():

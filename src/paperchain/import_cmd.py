@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -8,7 +9,7 @@ from typing import Any
 from .errors import Finding, PaperchainError
 from .extract import extract
 from .project import Project
-from .util import backup_path, now_iso, rel_posix, sha256_file, word_count
+from .util import backup_path, is_link, now_iso, rel_posix, sha256_file, word_count
 
 DOCX_SUFFIXES = {".docx"}
 PLAIN_SUFFIXES = {".md", ".markdown", ".txt"}
@@ -29,7 +30,11 @@ def _pandoc() -> str:
 def _import_docx(source: Path, project: Project) -> str:
     executable = _pandoc()
     temp = project.paper_dir / ".import.md"
-    media = project.ensure_media_dir()
+    # `--extract-media=Paper` makes Pandoc write `Paper/media/...` and links
+    # relative to the project root. Passing the absolute Paper/media path made
+    # Pandoc write `Paper/media/media/...` and absolute links, which failed at
+    # build time.
+    project.ensure_media_dir()
     command = [
         executable,
         str(source),
@@ -39,7 +44,7 @@ def _import_docx(source: Path, project: Project) -> str:
         "markdown",
         "--wrap=none",
         "--markdown-headings=atx",
-        f"--extract-media={media}",
+        "--extract-media=Paper",
         "--output",
         str(temp),
     ]
@@ -70,8 +75,15 @@ def _import_docx(source: Path, project: Project) -> str:
     text = temp.read_text(encoding="utf-8", errors="replace")
     temp.unlink(missing_ok=True)
     # Pandoc writes links relative to the project root. paper.md lives in
-    # Paper/, so make them relative to the draft instead.
-    text = text.replace("Paper/media/", "media/")
+    # Paper/, so make them relative to the draft instead. Older Pandoc
+    # versions and an absolute --extract-media target can still produce
+    # absolute Windows paths, so strip the Paper/ prefix as well. Only link
+    # targets are rewritten: prose that mentions a path is left alone.
+    prefix = re.escape(str(project.paper_dir))
+    text = re.sub(r"(\]\(\s*<?)" + prefix + r"[\\/]+", r"\1", text)
+    text = re.sub(r"""(src\s*=\s*["'])""" + prefix + r"[\\/]+", r"\1", text)
+    text = re.sub(r"(\]\(\s*<?)Paper/media/", r"\1media/", text)
+    text = re.sub(r"""(src\s*=\s*["'])Paper/media/""", r"\1media/", text)
     return text
 
 
@@ -170,8 +182,9 @@ def run_import(
     project.paper_md.write_text(text.rstrip() + "\n", encoding="utf-8", newline="\n")
 
     # Pandoc creates the media folder even when the manuscript has no images.
+    # A junction or symlink points at the cache and is never removed here.
     media = project.paper_media_dir
-    if media.is_dir() and not media.is_symlink() and not any(media.iterdir()):
+    if media.is_dir() and not is_link(media) and not any(media.iterdir()):
         try:
             media.rmdir()
         except OSError:

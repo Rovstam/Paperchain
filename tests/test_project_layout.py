@@ -128,6 +128,88 @@ def test_two_subfolders_can_hold_the_same_filename(tmp_path: Path) -> None:
     assert project.manifest.source("beta-review") is not None
 
 
+def test_same_filename_in_same_named_subfolders_gets_distinct_keys(
+    tmp_path: Path,
+) -> None:
+    project = make_project(tmp_path)
+    for category in ("Articulos", "Normas"):
+        folder = project.references_dir / category / "2024"
+        folder.mkdir(parents=True)
+        write_pdf(folder / "review.pdf", [f"{category} text."])
+    run_convert(project)
+
+    project = Project.open(project.root)
+    keys = {source.key for source in project.manifest.sources}
+    assert keys == {"articulos-2024-review", "normas-2024-review"}
+
+
+def test_long_reference_titles_get_short_distinct_keys(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    folder = project.references_dir / "Articulos"
+    folder.mkdir(parents=True)
+    shared = (
+        "A comprehensive evaluation of potentially significant drug drug "
+        "interactions in older adults with cancer"
+    )
+    write_pdf(folder / f"{shared} part one.pdf", ["Alpha text one."])
+    write_pdf(folder / f"{shared} part two.pdf", ["Beta text two."])
+    run_convert(project)
+
+    project = Project.open(project.root)
+    keys = {source.key for source in project.manifest.sources}
+    assert len(keys) == 2
+    assert all(len(key) <= 60 for key in keys)
+    assert all(key.startswith("articulos-a-comprehensive") for key in keys)
+
+
+def test_adding_a_colliding_file_does_not_rename_an_existing_key(
+    tmp_path: Path,
+) -> None:
+    project = make_project(tmp_path)
+    articulos = project.references_dir / "Articulos" / "2024"
+    articulos.mkdir(parents=True)
+    write_pdf(articulos / "review.pdf", ["Alpha text one."])
+    run_convert(project)
+    assert Project.open(project.root).manifest.source("2024-review") is not None
+
+    normas = project.references_dir / "Normas" / "2024"
+    normas.mkdir(parents=True)
+    write_pdf(normas / "review.pdf", ["Beta text two."])
+    run_convert(Project.open(project.root))
+
+    project = Project.open(project.root)
+    assert project.manifest.source("2024-review") is not None
+    assert project.manifest.source("normas-2024-review") is not None
+
+
+def test_convert_into_keeps_a_loose_file_in_its_category(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    write_pdf(
+        project.references_dir / "Decreto 0780 de 2016.pdf", ["Rule text."]
+    )
+    result = run_convert(project, into="Normas, Resoluciones y Normativas")
+
+    assert result["moved"]
+    target = (
+        project.references_dir
+        / "Normas, Resoluciones y Normativas"
+        / "Decreto 0780 de 2016.pdf"
+    )
+    assert target.is_file()
+    project = Project.open(project.root)
+    source = project.manifest.sources[0]
+    assert source.path == (
+        "References/Normas, Resoluciones y Normativas/Decreto 0780 de 2016.pdf"
+    )
+
+
+def test_convert_into_requires_the_loose_file_organizer(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    with pytest.raises(PaperchainError) as error:
+        run_convert(project, organize=False, into="Articulos")
+    assert error.value.code == "conflicting_options"
+
+
 @pytest.mark.skipif(not PANDOC, reason="pandoc is not installed")
 def test_import_docx_does_not_touch_the_original(tmp_path: Path) -> None:
     project = make_project(tmp_path)

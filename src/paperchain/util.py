@@ -14,6 +14,12 @@ def now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+def is_link(path: Path) -> bool:
+    """True for a POSIX symlink or a Windows directory junction."""
+    is_junction = getattr(path, "is_junction", None)
+    return path.is_symlink() or bool(is_junction and is_junction())
+
+
 def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
@@ -64,6 +70,26 @@ def slugify(value: str) -> str:
     # keys. A short digest of the original value keeps them stable and unique.
     digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:8]
     return f"doc-{digest}"
+
+
+def shorten_key(value: str, limit: int = 60) -> str:
+    """Trim a generated key to a size a human can type in a citation.
+
+    The tail is a digest of the full key, so two different long titles never
+    collapse to the same short key. The cut prefers a hyphen boundary when one
+    is close, because a key that stops at a word is easier to read.
+    """
+    if len(value) <= limit:
+        return value
+    digest = sha256_text(value)[:8]
+    head = value[: limit - len(digest) - 1].rstrip("-")
+    if "-" in head:
+        cut = head.rsplit("-", 1)[0]
+        if cut:
+            head = cut
+    if not head:
+        head = "doc"
+    return f"{head}-{digest}"
 
 
 def backup_path(path: Path) -> Path | None:

@@ -33,7 +33,7 @@ The real safeguard is `paperchain check`, not the permission files. Permissions 
 
 ## Install
 
-Requires Python 3.10+ and [pandoc](https://pandoc.org/installing.html) 2.15 or newer (pandoc is needed for DOCX import, `build`, and citeproc; `build` uses `--sandbox`; PDF/TXT import and `check` do not need it).
+Requires Python 3.10+ and [pandoc](https://pandoc.org/installing.html) 2.15 or newer (pandoc is needed for DOCX import, `build`, and citeproc; `build` validates image paths itself before invoking Pandoc; PDF/TXT import and `check` do not need it).
 
 <details>
 <summary><strong>Windows</strong></summary>
@@ -80,7 +80,7 @@ paperchain doctor
 
 Until the first PyPI release, install from a clone. After that, `pipx install paperchain` (or `pip install -U paperchain`) is enough, and every paper gets fixes without copying scripts.
 
-Do **not** copy the repository, `.venv`, `.tools`, `src/` or `tests/` into each paper project. Install the command once; `pipx` keeps it in its own environment. The source checkout itself can live anywhere outside your documents, for example `C:\Tools\paperchain`. A paper project only needs the command on `PATH`.
+Do **not** copy the repository, `.venv`, `src/` or `tests/` into each paper project. Install the command once; `pipx` keeps it in its own environment. The source checkout itself can live anywhere outside your documents, for example `C:\Tools\paperchain`. A paper project only needs the command and `pandoc` on `PATH`.
 
 ## Five-minute demo
 
@@ -98,7 +98,7 @@ paperchain build
 
 `init` creates the project folder, the layout, `AGENTS.md`, `paper.toml` and the OpenCode agent files. Open the folder in OpenCode and the `writer` agent is selected by default.
 
-`import`, `convert` and `lock` are yours to run. The agent is not allowed to import, convert, lock or unlock. If the original manuscript changes, `check` reports `manuscript_hash_mismatch`; re-run `paperchain import --force` (the current draft is saved as `Paper/paper.md.bak`), review the Markdown, and continue.
+`import`, `convert`, `match` and `lock` are yours to run. The agent is not allowed to import, convert, match, lock or unlock. If the original manuscript changes, `check` reports `manuscript_hash_mismatch`; re-run `paperchain import --force` (the current draft is saved as `Paper/paper.md.bak`), review the Markdown, and continue.
 
 If you already prepared the folder with the manuscript and references, adopt it instead of creating a new one:
 
@@ -124,6 +124,7 @@ my-paper/
 │   │   ├── study.pdf
 │   │   └── review.docx
 │   └── library.json       optional CSL JSON export from Zotero
+├── styles/                CSL files, for example vancouver.csl
 ├── Candidates/            sources an agent proposes; not citable
 ├── Paper/paper.md         the only file the writer edits
 ├── Paper/media/           images extracted from the original, if any
@@ -156,19 +157,34 @@ Reference types: PDF and DOCX are the intended formats. TXT and MD are still acc
 | `[@smith2024, pp. 12-14]` | page range |
 | `[@smith2024, p. 12: "exact words"]` | page plus quoted evidence |
 
-`check` verifies the quote against the extracted text for that page. By default `build` replaces the bracket with `(Smith, 2024, p. 12)` and appends a reference list for cited sources, unless `paper.md` already has a `## References` heading.
+`check` verifies the quote against the extracted text for that page. Without a Zotero bibliography, `build` replaces the bracket with `(Smith, 2024, p. 12)` and appends a reference list for cited sources, unless `paper.md` already has a `## References` heading. With a CSL style, Pandoc citeproc formats the citations and the reference list; standard Vancouver is numeric and normally does not print page locators, so the page in `[@key, p. 12]` is evidence for `check`, not necessarily text in the final document.
 
-### Zotero / CSL JSON
+YAML metadata blocks may set document metadata such as `title`, `author`, `date`, `abstract`, `keywords` and `lang`, but `check` uses an allow-list: citation settings and an inline `references:` bibliography are errors. A citation key must start and end with a letter or digit, because Pandoc treats a trailing `. : / + -` as punctuation outside the key; `build` also fails if citeproc reports that it could not resolve a citation.
 
-Export a CSL JSON bibliography from Zotero (or Better BibTeX) to `References/library.json`. When that file exists, `build` uses Pandoc citeproc instead of the built-in author-year renderer: titles, authors, journals, volume and DOI come from Zotero, and the citation keys must match the Better BibTeX keys. To use a specific style, add it to `paper.toml`:
+### Zotero and Vancouver
 
-```toml
-[build]
-bibliography = "References/library.json"
-csl = "styles/vancouver.csl"
-```
+Zotero is not read live. Paperchain uses an export you make by hand, and the style is only enforced if you ask for it. To get Vancouver as a property of the project:
 
-`bibliography` is optional when the file is at the default path. This produces formatted Word citations, not live Zotero fields; use the Zotero Word plugin if you need click-to-refresh fields. Only DOCX output is supported for now.
+1. Start the project with `paperchain init . --title "..." --style vancouver`. This writes `style = "vancouver"`, `bibliography = "References/library.json"` and `csl = "styles/vancouver.csl"` under `[build]` in `paper.toml`.
+2. In Zotero, give each item a Better BibTeX key and export the collection as **CSL JSON** to `References/library.json`.
+3. Download the NLM/Vancouver CSL from [Zotero's style page](https://www.zotero.org/styles/vancouver) and save it as `styles/vancouver.csl`. The page currently serves the NLM/Vancouver style (id `nlm-citation-sequence`), which is the current official style. `paperchain init --style vancouver` creates the `styles/` folder but does not bundle the CSL file.
+4. Run `paperchain match --apply`. Source keys come from filenames; this pairs each source with a Zotero entry by title and records `citation_key = "Amaeze2021"` in `paper.toml`. Only an exact normalized title is applied; a title that merely contains the other is shown as a suggestion for you to confirm. Unmatched, ambiguous and duplicate-title cases are reported instead of guessed, and can be set by hand.
+5. Run `paperchain lock`. This hashes the Zotero export and the CSL file next to the references.
+
+After that a citation may use either name: `[@Amaeze2021]` and `[@smith2024]` resolve to the same source, and citeproc always receives the Better BibTeX key.
+
+What is then enforced:
+
+- `check` fails with `style_requires_bibliography` / `style_requires_csl` if either file is missing, and with `csl_not_vancouver` if the style is not an independent, numeric style with a `<bibliography>` element and a known Vancouver id. A dependent style is rejected with the name of its parent. If a legitimate variant has a newer id, list that id in `styles/accepted-csl-ids.txt` beside the CSL file; `lock` hashes that sidecar together with the CSL, so a later edit is a `csl_hash_mismatch`. The writer adapter denies edits to `styles/**`.
+- `check` fails with `bibliography_hash_mismatch` (or `csl_hash_mismatch`) if the export or the style changed after `lock`. A Zotero re-export is therefore never silent; review it and run `paperchain lock --accept-changes`.
+- A locked style project must have hashed both files: an unhashed export is `bibliography_not_locked`, an unhashed style is `csl_not_locked`, and `lock` refuses to run while either file is missing.
+- `build` never falls back to the built-in author-year renderer or to Pandoc's default style while `style` is set, and `--force` does not override that.
+- `check` fails with `source_metadata_mismatch` once a `citation_key` is set and the CSL entry's title is not the same work as the PDF title. Without a `citation_key`, the same mismatch is a warning.
+- Two CSL entries with one id are an error as soon as a source or citation uses that id, because Paperchain and citeproc may choose different entries. An unused duplicate stays a warning.
+
+What is not enforced: whether the chosen CSL prints a locator such as `p. 12`. The official NLM/Vancouver style is numeric and does not print page locators; the page remains available to `check`. Without `style`, the previous behaviour is unchanged: `library.json` plus no `csl` gives Pandoc's default author-date style.
+
+Citeproc output is static formatted text, not live Zotero fields; use the Zotero Word plugin if you need click-to-refresh fields. Only DOCX output is supported.
 
 ## Commands
 
@@ -180,6 +196,7 @@ csl = "styles/vancouver.csl"
 | `paperchain import` | human | copy the original manuscript to `Paper/paper.md` without editing the original |
 | `paperchain convert` | human | extract page-marked text from references (recursively); the agent adapter denies it |
 | `paperchain lock` | human | record hashes, refuse to bless changes without `--accept-changes`, make references read-only |
+| `paperchain match` | human | pair sources with Zotero/Better BibTeX entries by title; `--apply` writes `citation_key` |
 | `paperchain unlock` | human | make references writable again |
 | `paperchain check` | agent | verify hashes, keys, pages, quotes |
 | `paperchain build` | agent | check, then build `Output/*.docx` |
@@ -206,6 +223,7 @@ For VS Code, open the project folder itself and select the `Paper/paper.md` file
 - [Agent adapters](docs/adapters.md) — the adapter contract and how to verify one.
 - [Windows setup](docs/setup-windows.md) · [macOS setup](docs/setup-macos.md) · [Linux setup](docs/setup-linux.md)
 - [Troubleshooting](docs/troubleshooting.md) — error codes and fixes.
+- [Changelog](docs/CHANGELOG.md) — what changed in each release.
 - [Contributing](docs/contributing.md) — tests, fixtures, releasing.
 
 ## License

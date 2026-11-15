@@ -9,7 +9,7 @@ This file is written by the author for the auditor. It is not part of the produc
 1. After `paperchain lock`, the reference set is frozen: every original and its converted page map is hashed, and `check` recomputes both hashes.
 2. Converted text is anchored to the originals: `text_sha256` hashes the JSON page map, `check` regenerates the `.txt` from that JSON and compares it exactly, and `lock`/`build` re-extract each original and compare it with the JSON.
 3. The imported original manuscript is unchanged: `paperchain import` records its path and hash in `paper.toml`, and `check` recomputes the hash.
-4. Every citation key resolves to a source in `paper.toml`, and to an entry in `References/library.json` when that CSL JSON bibliography is present.
+4. Every `citation_key` (or source key) resolves to a source in `paper.toml`, and to an entry in `References/library.json` when that CSL JSON bibliography is present.
 5. Every cited page exists in that source.
 6. A quoted span appears on the cited page after normalisation (case, NFKC, smart punctuation, whitespace, hyphenated line breaks).
 7. Any error blocks `paperchain build`, unless `--force`.
@@ -23,13 +23,14 @@ Generated text, page maps, `INDEX.md`, manuscript media and build temp files liv
 1. `README.md` — the promise and the stated limits.
 2. `docs/how-it-works.md` — the design and threat model as the author understands it.
 3. `src/paperchain/check.py` — the verifier. This is the product.
-4. `src/paperchain/citations.py` — syntax parsing, normalisation, rendering.
-5. `src/paperchain/locking.py`, `src/paperchain/manifest.py` — hashes and the manifest.
-6. `src/paperchain/extract.py` — PDF/DOCX extraction and page maps.
-7. `src/paperchain/convert.py`, `src/paperchain/build.py`, `src/paperchain/import_cmd.py` — the writers.
-8. `src/paperchain/project.py`, `src/paperchain/locations.py` — paths, validation and the cache.
-9. `src/paperchain/templates/paper/AGENTS.md.tmpl`, `src/paperchain/adapters/opencode/*` — the rules and the guardrail.
-10. `tests/` — what is actually exercised.
+4. `src/paperchain/citations.py` — syntax parsing, normalisation, rendering and code masking.
+5. `src/paperchain/library.py`, `src/paperchain/match_cmd.py` — CSL JSON, style validation and Zotero title matching.
+6. `src/paperchain/locking.py`, `src/paperchain/manifest.py` — hashes and the manifest.
+7. `src/paperchain/extract.py` — PDF/DOCX extraction and page maps.
+8. `src/paperchain/convert.py`, `src/paperchain/build.py`, `src/paperchain/import_cmd.py` — the writers.
+9. `src/paperchain/project.py`, `src/paperchain/locations.py` — paths, validation and the cache.
+10. `src/paperchain/templates/paper/AGENTS.md.tmpl`, `src/paperchain/adapters/opencode/*` — the rules and the guardrail.
+11. `tests/` — what is actually exercised. Start with `test_audit5.py` for the newest fixes.
 
 ## Set up
 
@@ -40,11 +41,11 @@ python -m pip install -e ".[dev]"
 python -m pytest -q
 ```
 
-Expected: 132 passed with `pandoc` on `PATH` on Windows (Linux/macOS: 134 passed); Windows skips 2 (POSIX mode bits and symlink creation) and Linux/macOS skip 0. Without `pandoc`, 5 more tests skip on any OS (DOCX import, build, and the build-sandbox test), leaving 127 passed and 7 skipped on Windows (129 passed and 5 skipped on Linux/macOS). CI installs pandoc on Ubuntu, macOS and Windows.
+Expected: 259 passed and 2 skipped with `pandoc` on `PATH` on Windows (Linux/macOS: similar, POSIX mode-bit and symlink tests may run instead of skipping); without `pandoc`, 12 tests skip as well, leaving 249 passed and 12 skipped on Windows. CI installs pandoc on Ubuntu, macOS and Windows.
 
-The archive excludes `.venv`, `.tools`, `dist`, `.git`, root-level `*.zip` archives and caches, so install pandoc yourself to exercise `build` and DOCX import. The audit workspace must be writable. Set `PAPERCHAIN_CACHE_DIR` to a temporary folder if you want the generated text kept out of your real OS cache.
+The archive excludes `.venv`, `dist`, `.git`, root-level `*.zip` archives and caches; Pandoc is external and must be on `PATH` to exercise `build` and DOCX import. The audit workspace must be writable. Set `PAPERCHAIN_CACHE_DIR` to a temporary folder if you want the generated text kept out of your real OS cache.
 
-Three external audits found issues; see `CHANGELOG.md` 0.1.1, 0.1.2 and the Unreleased section (the 0.3.0 fixes). Re-test those before looking for the next class.
+Five audit rounds found issues; see `docs/CHANGELOG.md` 0.1.1, 0.1.2 and the Unreleased sections (the 0.3.0 fixes, the third-audit fixes and the fourth-audit fixes). Re-test those before looking for the next class. The newest changes are the YAML metadata allow-list, rejection of an inline `references:` bibliography, citation keys that must start and end with a letter or digit, promotion of the citeproc unresolved-citation warning, NFD title folding, hashed style sidecar, `styles/**` edit denial, code-safe indented blocks and image `data:` URIs.
 
 Manual end-to-end check:
 
@@ -126,7 +127,7 @@ paperchain build
 - Can a crafted `paper.toml` make `lock`, `unlock`, `build`, `convert` or `doctor` touch a file outside the project? Try absolute paths, `..`, a key containing separators, `project_id`, a symlink or junction, and a case-insensitive Windows path.
 - Does `unlock` ever grant a permission the file did not have?
 - Can a failed chmod or a failed manifest save leave `locked_at` set with writable files, or files read-only with no lock?
-- `[build] output` must resolve inside `Output/`. What about `[build] reference_doc`, `bibliography` and `csl`? What does `build` pass to pandoc, and can a relative image path or a URL reach outside the project?
+- `[build] output` must resolve inside `Output/`. `[build] reference_doc`, `bibliography` and `csl` are now checked for absolute paths and paths outside the project; try `..`, a symlink or junction, a case-insensitive Windows path and a directory. What does `build` pass to pandoc, and can a relative image path or a URL reach outside the project?
 
 ### 9. DOCX extraction
 
@@ -140,7 +141,16 @@ paperchain build
 - `import` records the manuscript path and hash. Can a manifest with a path but no hash, or a hash but no path, pass `check`? What happens if the manuscript is replaced, moved, or a different file is passed explicitly?
 - With `References/library.json` present, `check` requires each citation key in the CSL JSON. Does anything verify that the CSL entry describes the same work as the PDF under that key? What does the built citation say if they disagree?
 - Does `build` still use citeproc with `--force` and an unknown key? Does `render_markdown_for_citeproc` keep the page locator and drop the quote correctly?
-- Can a CSL JSON `id` with unusual characters collide with a source key or break the citation?
+- Can a CSL JSON `id` with unusual characters collide with a source key or break the citation? Try composed and decomposed accents, combining marks, Greek, Cyrillic and non-letter scripts.
+- A YAML metadata block can appear anywhere in a Pandoc document, not only at the top. Try it after a heading, inside a blockquote or list, with quoted keys, with a flow mapping, with `...` as the closer, and inside a code fence. Does `check` agree with what Pandoc would actually read?
+- Two CSL entries can share an id. Which entry does citeproc print, which one does `check` read, and does the document fail whenever a source or citation depends on the choice?
+- `match --apply` now requires an exact normalized title. Try a subtitle, punctuation, Unicode normalization, a filename prefix and two entries with the same title. Can a `suggestion` be applied by mistake, and is it visible to an agent reading JSON?
+- `styles/accepted-csl-ids.txt` is a human opt-in for a renamed CSL variant. Can an agent write it through the adapter? Is it hashed with the CSL at `lock`? Does it accept only the id it was meant to, or can a malformed line accept the wrong style?
+- `build` rewrites media links outside code only. Try tilde fences, indented fences, four-space indented blocks, inline code, an unterminated fence and an HTML comment containing a media path. Is any code changed, and is the real image still rewritten?
+- YAML metadata is now an allow-list. Try an inline `references:` bibliography, a nested `author:` list, an escaped key, a complex key, a blockquote, a list item and a BOM. Does `check` agree with Pandoc on every case, and is a legitimate key such as `title` or `keywords` still allowed?
+- Citation keys must start and end with a letter or digit. Try a key ending in `.`, `:`, `/`, `+`, `-` and `_`, and a key with that punctuation in the middle. Can `check` pass while Pandoc prints an unresolved citation?
+- Title matching folds accents with NFKC and NFKD. Try composed and decomposed accents, ligatures, `ß` and Cyrillic or Greek diacritics. Can a different work compare equal, or the same work compare unequal?
+- `build` accepts image `data:` URIs and still blocks other `data:` payloads. Try a valid image, a non-image payload, a huge base64 string, an SVG data URI and a code example containing a data URI.
 
 ## Intentional limits — do not report these as bugs
 
@@ -148,7 +158,7 @@ paperchain build
 - No OCR. Scanned PDFs raise `pdf_no_text`; the hint says to OCR first.
 - Two-column PDFs and tables extract badly. Failures are loud, not silent.
 - DOCX has no fixed pages, so a Word source becomes page 1.
-- Citation rendering is author-year only, with the key as fallback. No APA/MLA/Chicago.
+- Without `[build] style`, citation rendering is author-year only, with the key as fallback. With `style = "vancouver"`, citeproc uses the downloaded Vancouver CSL; other named styles are not supported.
 - Only the OpenCode adapter ships. Claude Code and Codex are documented as not shipped.
 - `unlock` exists and always will. A human can defeat any lock.
 - `check` makes no network calls, and there is no telemetry. `build` invokes pandoc, which is a documented external dependency.
@@ -172,4 +182,4 @@ Do not rewrite the project. The deliverable is a review.
 
 ## Suggested prompt
 
-> Audit the attached paperchain 0.3.0 repository against `AUDIT.md`. Work through the list under "Attack these specifically". You may run the tests and the CLI. Report only reproducible findings, worst first, with file:line and a minimal reproduction. Do not report the intentional limits as bugs. There is no git history; treat the working tree as the submission.
+> Audit the attached paperchain 0.3.0 repository against `docs/audits/AUDIT.md`. Work through the list under "Attack these specifically". You may run the tests and the CLI. Report only reproducible findings, worst first, with file:line and a minimal reproduction. Do not report the intentional limits as bugs. There is no git history; treat the working tree as the submission.

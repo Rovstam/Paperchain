@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -10,9 +11,14 @@ from pathlib import Path
 from .errors import PaperchainError
 from .locations import project_cache
 from .manifest import MANIFEST_NAME, Manifest
-from .util import slugify
+from .util import shorten_key, slugify
 
 KEY_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+# Better BibTeX / Zotero ids are not lowercase and may contain `_`, `:` and `.`.
+# Zotero permits letters outside ASCII (`Peña2022`), so this accepts any Unicode
+# letter or digit after the first character. It must stay in step with
+# citations.CITATION_RE, or a citation parses and then cannot match its source.
+CITATION_KEY_RE = re.compile(r"^[^\W_](?:[\w.:/+-]*[^\W_])?$")
 
 # Files under References/ that are generated or that hold bibliography data.
 # They are not reference documents and must never be tracked as sources.
@@ -25,6 +31,31 @@ REFERENCE_SKIP_NAMES = {
     "readme.md",
 }
 REFERENCE_METADATA_SUFFIXES = {".json", ".bib", ".csl", ".ris", ".yaml", ".yml", ".xlsx", ".csv"}
+
+# Subject categories are chosen by the human or the agent, not hardcoded here.
+# This small file lists the folder names under References/ that `organize`
+# should treat as reference collections at the project root.
+CATEGORIES_FILE = ".paperchain-categories.json"
+
+
+def category_name(value: str) -> str:
+    """Normalise and validate a category folder name."""
+    name = " ".join(value.split())
+    drive = Path(name).drive
+    if (
+        not name
+        or name in {".", ".."}
+        or name.startswith(".")
+        or "/" in name
+        or "\\" in name
+        or drive
+    ):
+        raise PaperchainError(
+            "invalid_category",
+            f"{value!r} is not a folder name",
+            hint="pass one folder name such as --into Articulos (no slashes or drive letters)",
+        )
+    return name
 
 
 def find_root(start: Path | None = None) -> Path:
@@ -88,6 +119,13 @@ class Project:
                     hint="give each source a unique key",
                 )
             seen.add(source.key)
+            if source.citation_key:
+                if not CITATION_KEY_RE.match(source.citation_key):
+                    raise PaperchainError(
+                        "manifest_invalid",
+                        f"invalid citation_key {source.citation_key!r} for {source.key}",
+                        hint="citation_key is the Better BibTeX id; letters (including accented letters), digits and _ . : / + - are allowed in the middle, but the key must start and end with a letter or digit, e.g. Amaeze2021 or Peña2022",
+                    )
             raw = Path(source.path)
             if raw.is_absolute():
                 raise PaperchainError(
@@ -110,6 +148,24 @@ class Project:
                     hint="put the PDF or DOCX under References/ and run `paperchain convert`",
                 )
 
+        citation_owners: dict[str, str] = {}
+        for source in self.manifest.sources:
+            if not source.citation_key:
+                continue
+            if source.citation_key in citation_owners:
+                raise PaperchainError(
+                    "manifest_invalid",
+                    f"duplicate citation_key {source.citation_key!r}",
+                    hint=f"{citation_owners[source.citation_key]} and {source.key} would both answer a citation for it",
+                )
+            if source.citation_key in seen and source.citation_key != source.key:
+                raise PaperchainError(
+                    "manifest_invalid",
+                    f"citation_key {source.citation_key!r} collides with another source key",
+                    hint="give each source a distinct citation_key so a citation is never ambiguous",
+                )
+            citation_owners[source.citation_key] = source.key
+
         manuscript = self.manifest.manuscript_path
         if manuscript:
             raw = Path(manuscript)
@@ -128,6 +184,7 @@ class Project:
                 )
 
         for label, value in (
+            ("reference_doc", self.manifest.reference_doc),
             ("bibliography", self.manifest.bibliography),
             ("csl", self.manifest.csl),
         ):
@@ -144,7 +201,7 @@ class Project:
                 raise PaperchainError(
                     "manifest_invalid",
                     f"[build] {label} points outside the project",
-                    hint="keep bibliography and CSL files inside the project folder",
+                    hint="keep the reference doc, bibliography and CSL files inside the project folder",
                 )
 
     def save(self) -> None:
@@ -244,12 +301,20 @@ class Project:
 
     @property
     def bibliography_path(self) -> Path | None:
-        """The CSL JSON export from Zotero, if the project has one."""
+        """The project bibliography: CSL JSON, or a BibTeX export to convert.
+
+        `library.bib` is returned only so `check` and `build` can report the
+        conversion command. Nothing parses BibTeX; consumers raise
+        `bibliography_bibtex_unsupported` with the `pandoc -f bibtex` hint.
+        """
         configured = self.manifest.bibliography.strip()
         if configured:
             return (self.root / configured).resolve()
         default = self.references_dir / "library.json"
-        return default.resolve() if default.is_file() else None
+        if default.is_file():
+            return default.resolve()
+        bibtex = self.references_dir / "library.bib"
+        return bibtex.resolve() if bibtex.is_file() else None
 
     @property
     def csl_path(self) -> Path | None:
@@ -257,6 +322,47 @@ class Project:
         if not configured:
             return None
         return (self.root / configured).resolve()
+
+    @property
+    def categories_path(self) -> Path:
+        return self.references_dir / CATEGORIES_FILE
+
+    @property
+    def categories(self) -> list[str]:
+        """Folder names the agent uses to group references.
+
+        Paperchain does not hardcode subject categories such as articles or
+        norms. The agent writes a small JSON file next to the references; the
+        names in it are treated like the built-in reference folder names.
+        """
+        path = self.categories_path
+        if not path.is_file():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return []
+        raw = data.get("categories") if isinstance(data, dict) else data
+        if not isinstance(raw, list):
+            return []
+        categories: list[str] = []
+        seen: set[str] = set()
+        for item in raw:
+            if not isinstance(item, str):
+                continue
+            try:
+                name = category_name(item)
+            except PaperchainError:
+                continue
+            folded = name.casefold()
+            if folded in seen:
+                continue
+            seen.add(folded)
+            categories.append(name)
+        return categories
+
+    def is_category(self, name: str) -> bool:
+        return any(category.casefold() == name.casefold() for category in self.categories)
 
     def iter_reference_files(self) -> list[Path]:
         """All candidate reference documents under References/, recursively.
@@ -287,7 +393,8 @@ class Project:
 
         Files directly in `References/` or `References/originals/` keep the old
         filename-only key. A file in `References/topic/name.pdf` becomes
-        `topic-name`, so two subjects can both contain `review.pdf`.
+        `topic-name`, so two subjects can both contain `review.pdf`. Long
+        titles are trimmed with a digest suffix so a citation stays typeable.
         """
         relative = path.resolve().relative_to(self.references_dir.resolve())
         parent = path.parent.resolve()
@@ -295,12 +402,39 @@ class Project:
             self.references_dir.resolve(),
             self.originals_dir.resolve(),
         }:
-            return slugify(path.stem)
+            return shorten_key(slugify(path.stem))
         # References/study2024/study2024.pdf is the organized form: keep the
         # key clean instead of turning it into study2024-study2024.
         if slugify(path.parent.name) == slugify(path.stem):
-            return slugify(path.stem)
-        return f"{slugify(path.parent.name)}-{slugify(path.stem)}"
+            return shorten_key(slugify(path.stem))
+        # Known issue left for a future audit: when the folder name is a
+        # truncated copy of a long filename, this branch does not recognise it
+        # as the organized form and the key repeats part of the title.
+        return shorten_key(f"{slugify(path.parent.name)}-{slugify(path.stem)}")
+
+    def reference_key_candidates(self, path: Path) -> list[str]:
+        """Keys to try, starting with the normal key and adding ancestors.
+
+        Two files can share a filename and even a subfolder name in different
+        categories, for example `Articulos/2024/review.pdf` and
+        `Normas/2024/review.pdf`. The later candidates include more of the
+        folder path so those files still get distinct keys.
+        """
+        relative = path.resolve().relative_to(self.references_dir.resolve())
+        parts = relative.parts[:-1]
+        candidates = [self.reference_key(path)]
+        parent = path.parent.resolve()
+        if len(relative.parts) > 1 and parent not in {
+            self.references_dir.resolve(),
+            self.originals_dir.resolve(),
+        }:
+            stem = slugify(path.stem)
+            for depth in range(2, len(parts) + 1):
+                prefix = "-".join(slugify(part) for part in parts[-depth:])
+                candidate = shorten_key(f"{prefix}-{stem}")
+                if candidate not in candidates:
+                    candidates.append(candidate)
+        return candidates
 
     def find_manuscript(self, explicit: str | None = None) -> Path | None:
         """Find the one original manuscript in the project, without editing it."""

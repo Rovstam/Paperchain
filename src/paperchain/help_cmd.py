@@ -27,10 +27,11 @@ def help_data() -> dict[str, Any]:
             },
             {
                 "title": "3. Import the manuscript and prepare references",
-                "text": "The original manuscript is read, never edited. import writes Paper/paper.md.",
+                "text": "The original manuscript is read, never edited. import writes Paper/paper.md. If References/library.json exists, `match --apply` records the Better BibTeX key of each source so citations can use either name.",
                 "commands": [
                     "paperchain import",
                     "paperchain convert",
+                    "paperchain match --apply",
                     "paperchain lock",
                 ],
             },
@@ -53,6 +54,9 @@ def help_data() -> dict[str, Any]:
             "`organize` moves files; it never deletes. Without --apply it is read-only.",
             "Generated text, images and temp files live outside the project; paperchain doctor --json reports the cache paths under data.cache.",
             "References/library.json is an optional CSL JSON export from Zotero. When present, build uses it for citations and the bibliography.",
+            "Source keys come from filenames, Zotero ids do not. `paperchain match` pairs them by title and reports unmatched or ambiguous cases; `--apply` writes citation_key into paper.toml, and a citation may then use either the source key or the Zotero id.",
+            "Reference categories are folder names under References/. List them in References/.paperchain-categories.json so organize recognizes them, and use `organize --into CATEGORY` or `convert --into CATEGORY` to place loose files there.",
+            "Generated citation keys are capped at 60 characters; long titles end with a short digest, and colliding keys add more of the folder path.",
             "Agents: run `paperchain help --json` and relay data.steps. Do not scan unrelated folders to answer a how-to question.",
         ],
         "json_hint": "Run `paperchain help --json` for the same instructions in machine-readable form.",

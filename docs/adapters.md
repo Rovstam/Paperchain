@@ -48,7 +48,7 @@ Files: `opencode.json`, `.opencode/agents/writer.md`, `.opencode/agents/scout.md
 The project config does four things:
 
 1. Loads `AGENTS.md` as instructions and selects `writer` by default.
-2. Denies edits to `References/`, `Manuscript/`, `Output/`, any `.docx` or `.pdf`, `paper.toml` and `AGENTS.md`.
+2. Denies edits to `References/`, `styles/`, `Manuscript/`, `Output/`, any `.docx` or `.pdf`, `paper.toml` and `AGENTS.md`. The `styles/` rule matters because `accepted-csl-ids.txt` widens the style allow-list.
 3. Denies all shell commands, then allows `paperchain *`, `git status *` and `git diff *`, and re-denies `paperchain unlock*` and `paperchain init*`.
 4. Denies launching subagents except `scout`, and asks before touching directories outside the project.
 
@@ -70,7 +70,7 @@ Rules are evaluated in order and the last match wins. This is an allowlist of su
 
 `--force` is denied after the allow, so `paperchain build --force` stops. The CLI also disables argparse abbreviations (`allow_abbrev=False`), so `--fo` is a usage error rather than a synonym for `--force`.
 
-The writer may therefore run only `doctor`, `check` and `build`. Converting, locking and unlocking are human steps, and treating them as a boundary is deliberate.
+The writer may therefore run only `doctor`, `check` and `build`. Converting, matching, locking and unlocking are human steps, and treating them as a boundary is deliberate: `match --apply` writes `paper.toml`.
 
 The `writer` agent also denies `webfetch` and `websearch`, so it cannot quietly pull facts from outside the reference set. The `scout` subagent is the opposite: it may search, and it can only write to `Candidates/`.
 

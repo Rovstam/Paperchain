@@ -134,8 +134,16 @@ def run_init(
     force: bool = False,
     git: bool = False,
     adopt: bool = False,
+    style: str = "",
 ) -> dict[str, Any]:
     destination = Path(directory).expanduser().resolve()
+
+    if style and style.strip().lower() not in {"vancouver"}:
+        raise PaperchainError(
+            "style_unknown",
+            f"there is no built-in style named {style!r}",
+            hint="use --style vancouver, or omit --style",
+        )
 
     adapters = available_adapters()
     if agent not in adapters:
@@ -187,7 +195,7 @@ def run_init(
                 backups.append(rel_posix(saved, destination))
     copied, skipped = _copy_tree(template_root, destination, context, overwrite)
 
-    manifest = new_manifest(resolved_title)
+    manifest = new_manifest(resolved_title, style=style)
     manifest.save(destination / MANIFEST_NAME)
 
     adapter_files, skipped_adapters = _copy_adapter(
@@ -195,7 +203,7 @@ def run_init(
     )
     skipped += len(skipped_adapters)
 
-    for name in DIRECTORIES:
+    for name in [*DIRECTORIES, *(["styles"] if style else [])]:
         folder = destination / name
         folder.mkdir(parents=True, exist_ok=True)
         keep = folder / ".gitkeep"
@@ -222,10 +230,16 @@ def run_init(
         "put reference PDFs/DOCX in References/; loose files are moved into their own folders, and subfolders are allowed",
         f"{PROGRAM} import",
         f"{PROGRAM} convert",
+        f"{PROGRAM} match --apply",
         f"{PROGRAM} lock",
         f"{PROGRAM} check",
         f"{PROGRAM} build",
     ]
+    if style:
+        next_steps = [
+            "download the current Vancouver CSL from https://www.zotero.org/styles/vancouver to styles/vancouver.csl",
+            "export the Zotero collection as CSL JSON to References/library.json",
+        ] + next_steps
     if adopt and not force:
         next_steps = [
             f"{PROGRAM} organize",

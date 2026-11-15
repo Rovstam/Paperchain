@@ -58,9 +58,11 @@ One citation per bracket. Write `[@a, p. 1] [@b, p. 2]`, never `[@a; @b]`.
 
 These are the only accepted forms. `[see @key]`, `[-@key]` and a bare `@key` are errors, not citations: `check` refuses to guess, because a citation it does not parse is a citation it cannot verify.
 
-The quote is evidence, not text. It is removed from the built document; the citation remains as `(Author, Year, p. 12)`.
+The quote is evidence, not text. It is removed from the built document. Without a CSL style the citation remains as `(Author, Year, p. 12)`; with a style such as Vancouver, Pandoc citeproc formats it and the page locator may not be printed. Keep the page in the draft either way: `check` uses it as evidence.
 
-If the project has `References/library.json` (a CSL JSON export from Zotero), `build` uses Pandoc citeproc and that library is the authority for titles, authors and journal details. Keys must match the Better BibTeX citation keys.
+If the project has `References/library.json` (a CSL JSON export from Zotero), `build` uses Pandoc citeproc and that library is the authority for titles, authors and journal details. Each source records its Better BibTeX id in `citation_key`; `paperchain match` fills it in by title and reports anything it cannot match. Either the source key or the `citation_key` may be cited. If `[build] style = "vancouver"` is set, `styles/vancouver.csl` is the style file; the agent must not edit the export, the style file or `paper.toml`.
+
+Do not add YAML front matter such as `suppress-bibliography: true` or `bibliography:`. `check` rejects it with `front_matter_overrides_citations`, because it would silently remove the reference list.
 
 ## When a source is missing
 
@@ -79,7 +81,8 @@ A candidate is not a source. You cannot cite it.
 
 ## What gets the paper rejected
 
-- A citation key that is not in `paper.toml`.
+- A citation key that is neither a source key nor that source's `citation_key`.
+- YAML front matter that changes the bibliography or the citation output.
 - A page number past the end of the source.
 - A quote that does not appear on the cited page.
 - Placeholders such as `TODO`, `TKTK` or `[[`.

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .errors import Finding, PaperchainError
-from .project import Project
+from .project import Project, category_name
 from .util import sha256_file
 
 # A folder is treated as a reference collection when its name is one of these.
@@ -14,6 +14,14 @@ REFERENCE_DIR_RE = re.compile(
     r"^(references?|referencias?|bibliograf\w*|bibliography|sources?|fuentes|articulos?|literatura)$",
     re.IGNORECASE,
 )
+# These names hold the whole reference tree, so their own folder name is not
+# repeated under References/. A subject category such as Articulos keeps its
+# name, because it is one shelf inside the tree.
+REFERENCE_CONTAINER_RE = re.compile(
+    r"^(references?|referencias?|bibliograf\w*|bibliography|sources?|fuentes)$",
+    re.IGNORECASE,
+)
+REFERENCE_CATEGORY_RE = re.compile(r"^(articulos?|literatura)$", re.IGNORECASE)
 
 # Loose documents whose names look like instructions or examples are working
 # material, not citable sources. The obvious case is a formatting guide such
@@ -177,12 +185,32 @@ def _plan_dump(plan: Plan, root: Path, entry: Path, manuscript: Path | None) -> 
         plan.add(root, path, root / "Dump" / path.relative_to(root), "dump")
 
 
+def _reference_root_for(project: Project, entry: Path, reference_root: Path) -> Path:
+    """Where a reference folder's contents should land under References/.
+
+    A container such as Referencias/ is the tree itself, so its name is
+    dropped. A category such as Articulos/ or a name from the categories file
+    is one shelf, so it keeps its name unless it is already the target.
+    """
+    is_category = bool(REFERENCE_CATEGORY_RE.match(entry.name)) or project.is_category(
+        entry.name
+    )
+    if (
+        REFERENCE_CONTAINER_RE.match(entry.name)
+        or not is_category
+        or reference_root.name.casefold() == entry.name.casefold()
+    ):
+        return reference_root
+    return reference_root / entry.name
+
+
 def _plan_reference_dir(
     plan: Plan,
     root: Path,
     entry: Path,
     manuscript: Path | None,
     index: dict[str, str],
+    reference_root: Path,
 ) -> None:
     for path in sorted(entry.rglob("*")):
         if not path.is_file():
@@ -200,7 +228,7 @@ def _plan_reference_dir(
             plan,
             root,
             path,
-            root / "References" / path.relative_to(entry),
+            reference_root / path.relative_to(entry),
             index,
         )
 
@@ -232,12 +260,15 @@ def build_plan(
     manuscript: str | None = None,
     references: list[str] | None = None,
     dumps: list[str] | None = None,
+    into: str | None = None,
 ) -> Plan:
     root = project.root.resolve()
     plan = Plan()
     reference_index = _reference_index(root)
     forced_references = [_resolve(root, value) for value in (references or [])]
     forced_dumps = [_resolve(root, value) for value in (dumps or [])]
+    category = category_name(into) if into else ""
+    reference_root = root / "References" / category if category else root / "References"
 
     manuscript_path: Path | None = None
     candidate_paths: set[Path] = set()
@@ -322,14 +353,19 @@ def build_plan(
         if _under(entry.resolve(), forced_references):
             if entry.is_dir():
                 _plan_reference_dir(
-                    plan, root, entry, manuscript_path, reference_index
+                    plan,
+                    root,
+                    entry,
+                    manuscript_path,
+                    reference_index,
+                    _reference_root_for(project, entry, reference_root),
                 )
             else:
                 _add_reference(
                     plan,
                     root,
                     entry,
-                    root / "References" / entry.name,
+                    reference_root / entry.name,
                     reference_index,
                 )
             continue
@@ -337,22 +373,27 @@ def build_plan(
         if entry.is_file():
             if (
                 entry.suffix.casefold() in REFERENCE_SUFFIXES
-                and not _looks_like_guide(entry.name)
+                and (category or not _looks_like_guide(entry.name))
             ):
                 _add_reference(
                     plan,
                     root,
                     entry,
-                    root / "References" / entry.name,
+                    reference_root / entry.name,
                     reference_index,
                 )
             else:
                 _plan_dump(plan, root, entry, manuscript_path)
             continue
 
-        if REFERENCE_DIR_RE.match(entry.name):
+        if REFERENCE_DIR_RE.match(entry.name) or project.is_category(entry.name):
             _plan_reference_dir(
-                plan, root, entry, manuscript_path, reference_index
+                plan,
+                root,
+                entry,
+                manuscript_path,
+                reference_index,
+                _reference_root_for(project, entry, reference_root),
             )
         else:
             _plan_dump(plan, root, entry, manuscript_path)
@@ -461,12 +502,14 @@ def run_organize(
     manuscript: str | None = None,
     references: list[str] | None = None,
     dumps: list[str] | None = None,
+    into: str | None = None,
 ) -> dict:
     plan = build_plan(
         project,
         manuscript=manuscript,
         references=references,
         dumps=dumps,
+        into=into,
     )
 
     if apply and plan.candidates and not plan.manuscript:
@@ -496,6 +539,7 @@ def run_organize(
         "data": {
             "applied": apply,
             "manuscript": plan.manuscript_target or plan.manuscript,
+            "into": category_name(into) if into else "",
             "counts": counts,
             "moves": [
                 {"source": move.source, "target": move.target, "kind": move.kind}

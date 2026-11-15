@@ -4,6 +4,7 @@
   "default_agent": "writer",
   "permissions": [
     { "action": "edit", "resource": "References/**", "effect": "deny" },
+    { "action": "edit", "resource": "styles/**", "effect": "deny" },
     { "action": "edit", "resource": "Output/**", "effect": "deny" },
     { "action": "edit", "resource": "Manuscript/**", "effect": "deny" },
     { "action": "edit", "resource": "*.docx", "effect": "deny" },

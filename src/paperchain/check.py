@@ -10,12 +10,21 @@ from pathlib import Path
 from .citations import (
     find_hidden_citations,
     find_unrecognized,
+    mask_code,
     parse_citations,
     scan_markdown,
 )
 from .errors import Finding, PaperchainError
 from .extract import SUPPORTED_SUFFIXES, Extraction, extract, render_text_file
-from .library import load_csl_entries, titles_agree
+from .library import (
+    KNOWN_STYLES,
+    bibtex_conversion_hint,
+    duplicate_bibliography_ids,
+    load_csl_entries,
+    style_problem,
+    style_sha256,
+    titles_equal,
+)
 from .project import Project
 from .util import normalize_for_match, sha256_file, word_count
 
@@ -23,6 +32,193 @@ PLACEHOLDER_RE = re.compile(r"\b(TODO|TKTK|FIXME)\b|\[\[|lorem ipsum", re.IGNORE
 # XXX is also a Roman numeral ("Super Bowl XXX"), so only treat it as a
 # placeholder when it stands alone on a line or sits in brackets.
 XXX_PLACEHOLDER_RE = re.compile(r"(?m)^\s{0,3}(?:#{1,6}\s+|[-*+]\s+)?XXX\s*$|\[\s*XXX\s*\]")
+
+# Pandoc reads document metadata from YAML. An allow-list is safer than a
+# deny-list: `references:` can define a whole bibliography inline, and a key
+# with an escape or a complex-key form should not slip past the check.
+FRONT_MATTER_ALLOW = {
+    "abstract",
+    "abstract-title",
+    "author",
+    "authors",
+    "category",
+    "classoption",
+    "colorlinks",
+    "date",
+    "description",
+    "dir",
+    "documentclass",
+    "fontsize",
+    "geometry",
+    "indent",
+    "keywords",
+    "lang",
+    "language",
+    "linestretch",
+    "linkcolor",
+    "lof",
+    "lot",
+    "margin",
+    "number-sections",
+    "numbersections",
+    "papersize",
+    "section-numbering",
+    "subject",
+    "subtitle",
+    "title",
+    "title-prefix",
+    "titlepage",
+    "toc",
+    "toc-depth",
+    "toccolor",
+    "urlcolor",
+}
+
+
+_YAML_OPEN_RE = re.compile(r"^ {0,3}-{3,}\s*$")
+_YAML_CLOSE_RE = re.compile(r"^ {0,3}(?:-{3,}|\.{3})\s*$")
+_YAML_KEY_RE = re.compile(r"""^(["']?)(.+?)\1\s*:""")
+
+
+def _strip_blockquote(line: str) -> str:
+    """Remove `> ` markers from the front of a line, keeping its indent."""
+    while True:
+        match = re.match(r"^ {0,3}> ?", line)
+        if not match:
+            return line
+        line = line[match.end() :]
+
+
+def _strip_container(line: str) -> str:
+    """Remove blockquote and list markers for block-delimiter detection."""
+    while True:
+        stripped = _strip_blockquote(line)
+        if stripped != line:
+            line = stripped
+            continue
+        match = re.match(r"^ {0,3}(?:[-*+]|\d+[.)])\s+", line)
+        if not match:
+            return line
+        line = line[match.end() :]
+
+
+def _flow_mapping_keys(line: str) -> list[str]:
+    """Top-level keys of a one-line `{key: value, ...}` YAML mapping."""
+    value = line.strip()
+    if not (value.startswith("{") and value.endswith("}")):
+        return []
+    parts: list[str] = []
+    current: list[str] = []
+    depth = 0
+    quote = ""
+    for char in value[1:-1]:
+        if quote:
+            if char == quote:
+                quote = ""
+            current.append(char)
+            continue
+        if char in "\"'":
+            quote = char
+        elif char in "[{":
+            depth += 1
+        elif char in "]}":
+            depth = max(0, depth - 1)
+        elif char == "," and depth == 0:
+            parts.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+    parts.append("".join(current))
+    keys: list[str] = []
+    for part in parts:
+        match = _YAML_KEY_RE.match(part.strip())
+        if match:
+            keys.append(match.group(2).strip().lower())
+    return keys
+
+
+def _yaml_key_entries(lines: list[str], start: int, end: int) -> list[tuple[str, int]]:
+    """Top-level (key, line) pairs between two metadata delimiters.
+
+    `lines` already have blockquote markers removed but retain list markers and
+    indentation, so a YAML sequence under an allowed key is not mistaken for a
+    second top-level key.
+    """
+    content = lines[start + 1 : end]
+    key_indent: int | None = None
+    for line in content:
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("#", "- ")):
+            continue
+        key_indent = len(line) - len(line.lstrip(" "))
+        break
+    if key_indent is None:
+        return []
+
+    found: list[tuple[str, int]] = []
+    for offset, line in enumerate(content, start=start + 2):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if indent != key_indent:
+            continue
+        value = line[key_indent:]
+        if value.startswith("- "):
+            continue
+        if value.startswith("?"):
+            # YAML complex key: `? key` or a lone `?` with the key below.
+            name = value[1:].strip().strip("'\"") or "?"
+            found.append((name.lower(), offset))
+            continue
+        match = _YAML_KEY_RE.match(value)
+        if match:
+            found.append((match.group(2).strip().lower(), offset))
+            continue
+        for key in _flow_mapping_keys(value):
+            found.append((key, offset))
+    return found
+
+
+def front_matter_keys(text: str) -> dict[str, int] | None:
+    """Top-level keys of every YAML metadata block, mapped to their lines.
+
+    Pandoc accepts a YAML block anywhere in the document, not only at the top,
+    and a block can sit in a blockquote or a list item. A block that is not
+    first must be preceded by a blank line. Code fences are masked first so a
+    `---` inside one is not read as metadata.
+    """
+    text = text.lstrip("\ufeff")
+    lines = text.splitlines()
+    detect_lines = [_strip_container(line) for line in lines]
+    masked_lines = mask_code("\n".join(detect_lines)).split("\n")
+    content_lines = [_strip_blockquote(line) for line in lines]
+    keys: dict[str, int] = {}
+    index = 0
+    while index < len(lines):
+        if not _YAML_OPEN_RE.match(masked_lines[index]):
+            index += 1
+            continue
+        if index > 0 and detect_lines[index - 1].strip():
+            # A setext underline or a thematic break, not a metadata block.
+            index += 1
+            continue
+        closing = next(
+            (
+                end
+                for end in range(index + 1, len(lines))
+                if _YAML_CLOSE_RE.match(masked_lines[end])
+            ),
+            None,
+        )
+        if closing is None:
+            # An unclosed block is not metadata to Pandoc either.
+            index += 1
+            continue
+        for name, line in _yaml_key_entries(content_lines, index, closing):
+            keys.setdefault(name, line)
+        index = closing + 1
+    return keys or None
 
 
 @dataclass
@@ -145,6 +341,110 @@ def verify_quote(
     return None
 
 
+def _check_bibliography_and_style(project: Project, report: Report, bibliography: Path | None) -> None:
+    """Zotero export drift and the project's citation style.
+
+    The CSL JSON is metadata, not evidence, so it is hashed rather than made
+    read-only. A re-export that changes titles or authors changes the built
+    bibliography; this makes that change visible instead of silent.
+    """
+    manifest = project.manifest
+    style = manifest.style
+    if not style:
+        # Projects without a configured style keep the old behaviour: a Zotero
+        # export is optional and is not part of the lock.
+        return
+
+    if manifest.bibliography_sha256:
+        if bibliography is None or not bibliography.is_file():
+            report.errors.append(
+                Finding(
+                    "bibliography_missing",
+                    "the Zotero export recorded by `lock` is gone",
+                    file="paper.toml",
+                    hint="restore References/library.json, or run `paperchain lock --accept-changes` if you removed it on purpose",
+                )
+            )
+        elif sha256_file(bibliography) != manifest.bibliography_sha256:
+            report.errors.append(
+                Finding(
+                    "bibliography_hash_mismatch",
+                    f"{project.relative(bibliography)} changed since `lock`",
+                    file=project.relative(bibliography),
+                    hint="a Zotero re-export changes titles, authors and the reference list; review it, then run `paperchain lock --accept-changes`",
+                )
+            )
+    elif manifest.locked_at and bibliography is not None and bibliography.is_file():
+        report.errors.append(
+            Finding(
+                "bibliography_not_locked",
+                f"{project.relative(bibliography)} was not hashed by `lock`",
+                file="paper.toml",
+                hint="run `paperchain lock --accept-changes` so a later re-export is detected",
+            )
+        )
+
+    csl = project.csl_path
+    if manifest.csl_sha256 and csl is not None and csl.is_file() and style_sha256(csl) != manifest.csl_sha256:
+        report.errors.append(
+            Finding(
+                "csl_hash_mismatch",
+                f"{project.relative(csl)} changed since `lock`",
+                file=project.relative(csl),
+                hint="review the style file and any accepted-csl-ids.txt beside it, then run `paperchain lock --accept-changes`",
+            )
+        )
+    elif manifest.locked_at and csl is not None and csl.is_file() and not manifest.csl_sha256:
+        report.errors.append(
+            Finding(
+                "csl_not_locked",
+                f"{project.relative(csl)} was not hashed by `lock`",
+                file="paper.toml",
+                hint="run `paperchain lock --accept-changes` so a changed style is detected",
+            )
+        )
+
+    if style not in KNOWN_STYLES:
+        report.errors.append(
+            Finding(
+                "style_unknown",
+                f"[build] style = {style!r} is not supported",
+                file="paper.toml",
+                hint=f"supported: {', '.join(sorted(KNOWN_STYLES))}; or remove the line",
+            )
+        )
+        return
+    if bibliography is None or not bibliography.is_file():
+        report.errors.append(
+            Finding(
+                "style_requires_bibliography",
+                f"style {style} needs the Zotero export; without it the built-in author-year citations would be used",
+                file="paper.toml",
+                hint="export CSL JSON (Better BibTeX keys) from Zotero to References/library.json",
+            )
+        )
+    if csl is None or not csl.is_file():
+        report.errors.append(
+            Finding(
+                "style_requires_csl",
+                f"style {style} needs a CSL file, and [build] csl is not set or does not exist",
+                file="paper.toml",
+                hint=f"download the NLM/Vancouver CSL from https://www.zotero.org/styles/vancouver (the current name of the style it serves), save it as styles/{style}.csl and set csl = \"styles/{style}.csl\" under [build]",
+            )
+        )
+    else:
+        problem = style_problem(csl, style)
+        if problem:
+            report.errors.append(
+                Finding(
+                    "csl_not_vancouver" if style == "vancouver" else "csl_style_mismatch",
+                    f"{project.relative(csl)} is not a {style} style: {problem}",
+                    file=project.relative(csl),
+                    hint="use the NLM/Vancouver CSL from https://www.zotero.org/styles/vancouver, or list a confirmed variant id in styles/accepted-csl-ids.txt",
+                )
+            )
+
+
 def run_check(
     project: Project,
     strict: bool = False,
@@ -181,6 +481,18 @@ def run_check(
                 Finding("paper_empty", "Paper/paper.md is empty", file="Paper/paper.md")
             )
         stats["words"] = word_count(text)
+        for name, line in (front_matter_keys(text) or {}).items():
+            if name not in FRONT_MATTER_ALLOW:
+                report.errors.append(
+                    Finding(
+                        "front_matter_overrides_citations",
+                        f"YAML metadata sets {name!r}, which is not in the allowed metadata list",
+                        file="Paper/paper.md",
+                        line=line,
+                        data={"key": name},
+                        hint="remove it; only document metadata such as title, author, date, abstract and keywords is allowed, and style, csl, bibliography and references belong in paper.toml or the Zotero export",
+                    )
+                )
 
     # -- the original manuscript -----------------------------------------
     # The manuscript is never converted in place or locked. Import records its
@@ -414,24 +726,43 @@ def run_check(
 
     citations = parse_citations(text)
     stats["citations"] = len(citations)
-    cited_keys: set[str] = set()
+    cited_source_keys: set[str] = set()
 
     bibliography = project.bibliography_path
     bibliography_key_set: set[str] | None = None
     bibliography_entries: dict[str, dict] = {}
+    duplicate_ids: list[str] = []
+    duplicate_ids_used: set[str] = set()
     if bibliography is not None:
         try:
             bibliography_entries = load_csl_entries(bibliography)
             bibliography_key_set = set(bibliography_entries)
+            duplicate_ids = duplicate_bibliography_ids(bibliography)
+            duplicate_ids_used = {
+                manifest.citation_key_for(source)
+                for source in manifest.sources
+                if manifest.citation_key_for(source) in duplicate_ids
+            }
         except PaperchainError as exc:
+            code, message, hint = exc.code, exc.message, exc.hint
+            bibtex = project.references_dir / "library.bib"
+            if code == "bibliography_missing" and bibtex.is_file():
+                code = "bibliography_bibtex_unsupported"
+                message = (
+                    f"{project.relative(bibtex)} is a BibTeX export, "
+                    f"but {project.relative(bibliography)} does not exist"
+                )
+                hint = bibtex_conversion_hint(bibtex)
             report.errors.append(
                 Finding(
-                    exc.code,
-                    exc.message,
+                    code,
+                    message,
                     file=project.relative(bibliography),
-                    hint=exc.hint,
+                    hint=hint,
                 )
             )
+
+    _check_bibliography_and_style(project, report, bibliography)
 
     # -- source metadata --------------------------------------------------
     # convert fills title/authors from PDF or DOCX metadata, which is often
@@ -454,22 +785,30 @@ def run_check(
                     hint="set authors and year in paper.toml; extraction cannot tell whether the metadata names the right work",
                 )
             )
-        entry = bibliography_entries.get(source.key)
-        if entry and source.title and not titles_agree(source.title, entry.get("title")):
-            report.warnings.append(
-                Finding(
-                    "source_metadata_mismatch",
-                    f"{source.key}: paper.toml title and the bibliography entry describe different works",
-                    severity="warning",
-                    file="paper.toml",
-                    data={
-                        "key": source.key,
-                        "source_title": source.title,
-                        "bibliography_title": str(entry.get("title", "")),
-                    },
-                    hint="check that the PDF under this key is the work the CSL entry names",
-                )
+        entry = bibliography_entries.get(manifest.citation_key_for(source))
+        if entry and source.title and not titles_equal(source.title, entry.get("title")):
+            # Once a citation_key is set, citeproc will print that entry for
+            # this source. A different title is then a wrong reference, not a
+            # metadata warning; without a key the internal key is only a guess.
+            severity = "error" if source.citation_key else "warning"
+            finding = Finding(
+                "source_metadata_mismatch",
+                f"{source.key}: paper.toml title and the bibliography entry describe different works",
+                severity=severity,
+                file="paper.toml",
+                data={
+                    "key": source.key,
+                    "source_title": source.title,
+                    "bibliography_title": str(entry.get("title", "")),
+                },
+                hint=(
+                    "the citation_key points citeproc at a different work; fix the title, "
+                    "or set citation_key to the entry that matches this PDF"
+                    if source.citation_key
+                    else "check that the PDF under this key is the work the CSL entry names"
+                ),
             )
+            (report.errors if source.citation_key else report.warnings).append(finding)
 
     for snippet, line in find_unrecognized(masked_text, citations):
         report.errors.append(
@@ -518,8 +857,7 @@ def run_check(
             report.citations.append(record)
             continue
 
-        cited_keys.add(citation.key)
-        source = manifest.source(citation.key)
+        source = manifest.source_for_citation(citation.key)
         if source is None:
             record["ok"] = False
             report.errors.append(
@@ -529,22 +867,35 @@ def run_check(
                     file="Paper/paper.md",
                     line=citation.line,
                     data={"key": citation.key},
-                    hint=f"add it under References/ and run `paperchain convert`, or use one of: {', '.join(manifest.source_keys) or '(none)'}",
+                    hint=(
+                        "add it under References/ and run `paperchain convert`; "
+                        f"if it is a Zotero key, run `paperchain match` to map it to a source. "
+                        f"known keys: {', '.join(manifest.citation_keys) or '(none)'}"
+                    ),
                 )
             )
             report.citations.append(record)
             continue
 
-        if bibliography_key_set is not None and citation.key not in bibliography_key_set:
+        citation_key = manifest.citation_key_for(source)
+        record["citation_key"] = citation_key
+        cited_source_keys.add(source.key)
+        if citation_key in duplicate_ids:
+            duplicate_ids_used.add(citation_key)
+
+        if bibliography_key_set is not None and citation_key not in bibliography_key_set:
             record["ok"] = False
             report.errors.append(
                 Finding(
                     "citation_not_in_bibliography",
-                    f"{citation.key} is not in {project.relative(bibliography)}",
+                    f"{citation_key} is not in {project.relative(bibliography)}",
                     file="Paper/paper.md",
                     line=citation.line,
-                    data={"key": citation.key},
-                    hint="add the reference in Zotero and export CSL JSON again, or fix the citation key",
+                    data={"key": citation_key, "source": source.key},
+                    hint=(
+                        f"{source.key} is the source for this citation; set its citation_key in paper.toml "
+                        "to the Better BibTeX id, or run `paperchain match` to map sources to Zotero entries"
+                    ),
                 )
             )
             report.citations.append(record)
@@ -564,7 +915,7 @@ def run_check(
                 )
             )
 
-        pages, _, text_error = cache.get(citation.key)
+        pages, _, text_error = cache.get(source.key)
         page_count = len(pages or [])
 
         if citation.has_pages and page_count and (
@@ -598,7 +949,7 @@ def run_check(
                 record["ok"] = False
             else:
                 found = verify_quote(
-                    cache.normalized(citation.key, join_hyphenation=True),
+                    cache.normalized(source.key, join_hyphenation=True),
                     citation.quote,
                     citation.pages,
                     join_hyphenation=True,
@@ -607,7 +958,7 @@ def run_check(
                     # "well-\nknown" joins to "wellknown" for matching, but a
                     # quote written as "well-known" should still verify.
                     found = verify_quote(
-                        cache.normalized(citation.key, join_hyphenation=False),
+                        cache.normalized(source.key, join_hyphenation=False),
                         citation.quote,
                         citation.pages,
                         join_hyphenation=False,
@@ -622,7 +973,7 @@ def run_check(
                             file="Paper/paper.md",
                             line=citation.line,
                             data={"key": citation.key, "quote": preview},
-                            hint=f"copy the words exactly from {project.relative(project.text_dir / f'{citation.key}.txt')}; extraction may need fixing for this page",
+                            hint=f"copy the words exactly from {project.relative(project.text_dir / f'{source.key}.txt')}; extraction may need fixing for this page",
                         )
                     )
                 elif citation.has_pages and found not in citation.pages:
@@ -665,9 +1016,57 @@ def run_check(
 
         report.citations.append(record)
 
+    # -- duplicate CSL ids ------------------------------------------------
+    # Two entries with one id are ambiguous: Paperchain reads the first, while
+    # citeproc has been observed to use the last. That is a wrong reference,
+    # not a data warning, as soon as a source or citation relies on the id.
+    for duplicate in duplicate_ids:
+        used = duplicate in duplicate_ids_used
+        severity = "error" if used else "warning"
+        message = f"{duplicate!r} appears more than once in {project.relative(bibliography)}"
+        if used:
+            message += "; a source or citation relies on it, and Paperchain and citeproc may choose different entries"
+        finding = Finding(
+            "bibliography_duplicate_id",
+            message,
+            severity=severity,
+            file=project.relative(bibliography),
+            data={"key": duplicate},
+            hint="give each Zotero item a unique Better BibTeX key and re-export; do not cite or match a duplicated id",
+        )
+        (report.errors if used else report.warnings).append(finding)
+
+    # -- bibliography entries no source points at -------------------------
+    # A Zotero export normally holds every item in the collection, so an
+    # unmatched entry is not automatically wrong. The warning exists so a
+    # source with the wrong citation_key is visible instead of silently
+    # missing from the built reference list.
+    if bibliography_key_set:
+        claimed = {
+            manifest.citation_key_for(source)
+            for source in manifest.sources
+            if manifest.citation_key_for(source) in bibliography_key_set
+        }
+        unused = sorted(bibliography_key_set - claimed)
+        if unused:
+            # A Zotero collection normally holds more items than the project
+            # has converted PDFs. One line keeps `check` readable; `match`
+            # lists each entry when the user is pairing sources.
+            report.warnings.append(
+                Finding(
+                    "bibliography_entry_unmatched",
+                    f"{len(unused)} CSL entr{'y' if len(unused) == 1 else 'ies'} in "
+                    f"{project.relative(bibliography)} {'is' if len(unused) == 1 else 'are'} not used by any source",
+                    severity="warning",
+                    file=project.relative(bibliography),
+                    data={"keys": unused},
+                    hint="run `paperchain match` to map them to sources, or cite them after converting the PDF",
+                )
+            )
+
     # -- unused sources --------------------------------------------------
     for source in manifest.sources:
-        if source.key not in cited_keys:
+        if source.key not in cited_source_keys:
             report.warnings.append(
                 Finding(
                     "unused_source",

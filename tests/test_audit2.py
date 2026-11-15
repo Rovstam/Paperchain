@@ -85,7 +85,6 @@ def test_a_fence_with_backticks_in_the_info_string_is_inline_code(tmp_path: Path
 @pytest.mark.parametrize(
     "citation",
     [
-        '[@Ünknown2020, p. 3: "fabricated words are here"]',
         '[@_nobody, p. 1: "fabricated words are here"]',
         "@{nobody}",
     ],
@@ -304,6 +303,7 @@ def test_symlink_outside_originals_is_rejected(tmp_path: Path) -> None:
     project = make_project(tmp_path)
     victim = tmp_path / "victim.txt"
     victim.write_text("outside", encoding="utf-8")
+    project.originals_dir.mkdir(parents=True, exist_ok=True)
     os.symlink(victim, project.originals_dir / "linked.txt")
     with pytest.raises(PaperchainError) as error:
         run_convert(project)

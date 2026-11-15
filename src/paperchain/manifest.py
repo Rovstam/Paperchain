@@ -52,6 +52,10 @@ def _int_field(data: dict[str, Any], name: str, key: str) -> int:
 class Source:
     key: str
     path: str
+    # The Better BibTeX / Zotero id used in paper.md. Empty means "same as key".
+    # `key` stays the internal, filename-derived name so hashes and text files
+    # never move when a Zotero export is re-imported.
+    citation_key: str = ""
     title: str = ""
     authors: str = ""
     year: int | None = None
@@ -80,6 +84,7 @@ class Source:
         return cls(
             key=key,
             path=path,
+            citation_key=str(data.get("citation_key", "") or "").strip(),
             title=str(data.get("title", "") or ""),
             authors=str(data.get("authors", "") or ""),
             year=year,
@@ -95,6 +100,7 @@ class Source:
         return {
             "key": self.key,
             "path": self.path,
+            "citation_key": self.citation_key,
             "title": self.title,
             "authors": self.authors,
             "year": self.year,
@@ -118,6 +124,9 @@ class Manifest:
     reference_doc: str = ""
     bibliography: str = ""
     csl: str = ""
+    style: str = ""
+    bibliography_sha256: str = ""
+    csl_sha256: str = ""
     manuscript_path: str = ""
     manuscript_sha256: str = ""
     manuscript_imported_at: str = ""
@@ -171,6 +180,9 @@ class Manifest:
             reference_doc=str(build.get("reference_doc", "") or ""),
             bibliography=str(build.get("bibliography", "") or ""),
             csl=str(build.get("csl", "") or ""),
+            style=str(build.get("style", "") or "").strip().lower(),
+            bibliography_sha256=str(build.get("bibliography_sha256", "") or ""),
+            csl_sha256=str(build.get("csl_sha256", "") or ""),
             manuscript_path=str(manuscript.get("path", "") or ""),
             manuscript_sha256=str(manuscript.get("sha256", "") or ""),
             manuscript_imported_at=str(manuscript.get("imported_at", "") or ""),
@@ -194,7 +206,13 @@ class Manifest:
         if self.locked_at:
             lines.append(f"locked_at = {toml_string(self.locked_at)}")
 
-        if self.build_output or self.reference_doc or self.bibliography or self.csl:
+        if (
+            self.build_output
+            or self.reference_doc
+            or self.bibliography
+            or self.csl
+            or self.style
+        ):
             lines += ["", "[build]"]
             if self.build_output:
                 lines.append(f"output = {toml_string(self.build_output)}")
@@ -204,6 +222,12 @@ class Manifest:
                 lines.append(f"bibliography = {toml_string(self.bibliography)}")
             if self.csl:
                 lines.append(f"csl = {toml_string(self.csl)}")
+            if self.style:
+                lines.append(f"style = {toml_string(self.style)}")
+            if self.bibliography_sha256:
+                lines.append(f"bibliography_sha256 = {toml_string(self.bibliography_sha256)}")
+            if self.csl_sha256:
+                lines.append(f"csl_sha256 = {toml_string(self.csl_sha256)}")
 
         if self.manuscript_path or self.manuscript_sha256 or self.manuscript_imported_at:
             lines += ["", "[manuscript]"]
@@ -221,6 +245,8 @@ class Manifest:
             lines += ["", "[[sources]]"]
             lines.append(f"key = {toml_string(source.key)}")
             lines.append(f"path = {toml_string(source.path)}")
+            if source.citation_key:
+                lines.append(f"citation_key = {toml_string(source.citation_key)}")
             for field_name in ("title", "authors"):
                 value = getattr(source, field_name)
                 if value:
@@ -253,6 +279,26 @@ class Manifest:
                 return source
         return None
 
+    def source_for_citation(self, key: str) -> Source | None:
+        """Resolve a citation key to its source.
+
+        `citation_key` wins when set, so a Zotero id such as `Amaeze2021`
+        works without renaming the internal, filename-derived key. The
+        internal key stays a valid fallback for projects without Zotero.
+        """
+        for source in self.sources:
+            if source.citation_key and source.citation_key == key:
+                return source
+        return self.source(key)
+
+    @staticmethod
+    def citation_key_for(source: Source) -> str:
+        return source.citation_key or source.key
+
+    @property
+    def citation_keys(self) -> list[str]:
+        return [self.citation_key_for(source) for source in self.sources]
+
     def upsert(self, source: Source) -> None:
         for index, existing in enumerate(self.sources):
             if existing.key == source.key:
@@ -267,12 +313,16 @@ class Manifest:
         return self.build_output or f"Output/{self.slug or 'paper'}.docx"
 
 
-def new_manifest(title: str) -> Manifest:
+def new_manifest(title: str, style: str = "") -> Manifest:
     slug = slugify(title)
+    style = style.strip().lower()
     return Manifest(
         title=title,
         slug=slug,
         project_id=uuid.uuid4().hex,
         created=now_iso(),
         build_output=f"Output/{slug}.docx",
+        style=style,
+        bibliography="References/library.json" if style else "",
+        csl=f"styles/{style}.csl" if style else "",
     )

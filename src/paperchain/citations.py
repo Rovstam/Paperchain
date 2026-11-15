@@ -5,8 +5,14 @@ from dataclasses import dataclass
 
 from .manifest import Source
 
+# Better BibTeX ids may contain letters outside ASCII. `[^\W_]` is a Unicode
+# letter or digit (word character without underscore), which keeps the first
+# character from being punctuation while allowing names such as Peña2022.
+# The last character must also be a letter or digit: Pandoc treats a trailing
+# `. : / + -` as punctuation outside the key, so accepting it here made
+# `check` and Pandoc disagree.
 CITATION_RE = re.compile(
-    r"""\[@(?P<key>[A-Za-z0-9][A-Za-z0-9_.:/+-]*)(?P<body>(?:[^\]"'“”]|"[^"]*"|“[^”]*”|'[^']*')*)\]"""
+    r"""\[@(?P<key>[^\W_](?:[\w.:/+-]*[^\W_])?)(?![.:/+-])(?P<body>(?:[^\]"'“”]|"[^"]*"|“[^”]*”|'[^']*')*)\]"""
 )
 
 _LOCATOR = r"(?:pp?\.)\s*\d+(?:\s*[-\u2013\u2014]\s*\d+)?"
@@ -119,12 +125,15 @@ def _find_code_span_end(text: str, start: int, run: int) -> int | None:
     return None
 
 
-def scan_markdown(text: str) -> tuple[str, list[MaskIssue]]:
+def scan_markdown(
+    text: str, ranges: list[tuple[int, int]] | None = None
+) -> tuple[str, list[MaskIssue]]:
     """Mask fenced code, inline code and HTML comments, preserving offsets.
 
     The scan is left to right so that a comment opener inside a code span is
     inert, and a code span inside a comment is inert. Unterminated constructs
     are reported instead of silently swallowing the rest of the document.
+    Pass `ranges` to collect the (start, end) of every masked construct.
     """
     buffer = list(text)
     issues: list[MaskIssue] = []
@@ -169,6 +178,8 @@ def scan_markdown(text: str) -> tuple[str, list[MaskIssue]]:
                             issues.append(MaskIssue("unterminated_code_block", line))
                         else:
                             end = found[1]
+                        if ranges is not None:
+                            ranges.append((index, end))
                         _mask_range(buffer, text, index, end)
                         line += text.count("\n", index, end)
                         index = end
@@ -189,6 +200,8 @@ def scan_markdown(text: str) -> tuple[str, list[MaskIssue]]:
             close = _find_code_span_end(text, probe, run)
             if close is not None:
                 end = close + run
+                if ranges is not None:
+                    ranges.append((index, end))
                 _mask_range(buffer, text, index, end)
                 line += text.count("\n", index, end)
                 index = end
@@ -199,10 +212,14 @@ def scan_markdown(text: str) -> tuple[str, list[MaskIssue]]:
             end = text.find("-->", index + 4)
             if end == -1:
                 issues.append(MaskIssue("unterminated_comment", line))
+                if ranges is not None:
+                    ranges.append((index, length))
                 _mask_range(buffer, text, index, length)
                 index = length
                 break
             end += 3
+            if ranges is not None:
+                ranges.append((index, end))
             _mask_range(buffer, text, index, end)
             line += text.count("\n", index, end)
             index = end
@@ -216,6 +233,36 @@ def scan_markdown(text: str) -> tuple[str, list[MaskIssue]]:
 
 def mask_code(text: str) -> str:
     return scan_markdown(text)[0]
+
+
+def indented_code_ranges(text: str) -> list[tuple[int, int]]:
+    """Ranges of CommonMark indented code blocks.
+
+    A block starts after a blank line with four spaces or a tab and continues
+    through blank lines until a less-indented nonblank line. This is only used
+    where a caller needs the ranges; citation parsing continues to mask fenced
+    and inline code through `scan_markdown`.
+    """
+    lines = text.splitlines(keepends=True)
+    ranges: list[tuple[int, int]] = []
+    start: int | None = None
+    offset = 0
+    previous_blank = True
+    for line in lines:
+        content = line.rstrip("\r\n")
+        blank = not content.strip()
+        indented = content.startswith(("    ", "\t"))
+        if start is None:
+            if not blank and indented and previous_blank:
+                start = offset
+        elif not blank and not indented:
+            ranges.append((start, offset))
+            start = None
+        previous_blank = blank
+        offset += len(line)
+    if start is not None:
+        ranges.append((start, len(text)))
+    return ranges
 
 
 def parse_locator(locator: str) -> tuple[int, int] | None:

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from paperchain.build import run_build
+from paperchain.build import _check_resources, run_build
 from paperchain.check import run_check
 from paperchain.convert import run_convert
 from paperchain.errors import PaperchainError
@@ -263,7 +263,22 @@ def test_adapter_denies_write_through_diff_and_compound_commands() -> None:
     assert _decide(rules, "paperchain check | tee out.txt") == "deny"
 
 
-# -- 7. build sandbox ------------------------------------------------------
+# -- 7. build resources ----------------------------------------------------
+
+
+def test_build_rejects_a_remote_image(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    with pytest.raises(PaperchainError) as error:
+        _check_resources("![x](https://example.com/x.png)", project)
+    assert error.value.code == "pandoc_resource_blocked"
+
+
+def test_build_accepts_a_local_image(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    media = project.paper_dir / "media"
+    media.mkdir(parents=True, exist_ok=True)
+    (media / "x.png").write_bytes(b"not an image")
+    _check_resources("![x](media/x.png)", project)
 
 
 @pytest.mark.skipif(shutil.which("pandoc") is None, reason="pandoc is not installed")

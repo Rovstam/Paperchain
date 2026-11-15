@@ -34,7 +34,9 @@ src/paperchain/
 ├── templates/      copied by `paperchain init`
 └── adapters/       per-tool permissions
 tests/              pytest, generated fixtures only
-docs/               setup per OS, how it works, troubleshooting
+docs/               setup per OS, how it works, troubleshooting, changelog
+docs/audits/        audit briefs, instructions and finding log
+docs/bugs/          open and archived bug reports
 ```
 
 Templates and adapters ship **inside** the package. An installed wheel cannot read a sibling `template/` directory, and keeping two copies would drift. If you add a template file:
