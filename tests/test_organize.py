@@ -201,6 +201,14 @@ def test_category_file_marks_a_project_folder_as_references(tmp_path: Path) -> N
     assert plan[source]["target"] == f"References/{source}"
 
 
+def test_invalid_categories_are_reported_instead_of_ignored(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    project.categories_path.write_text("{not json", encoding="utf-8")
+    with pytest.raises(PaperchainError) as error:
+        run_organize(Project.open(project.root))
+    assert error.value.code == "categories_invalid"
+
+
 def test_organize_rejects_a_category_that_is_a_path(tmp_path: Path) -> None:
     project = make_project(tmp_path)
     with pytest.raises(PaperchainError) as error:

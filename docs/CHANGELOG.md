@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased - deterministic agent interface
+
+### Added
+
+- CSL JSON and BibTeX bibliographies now share one deterministic read path. BibTeX is converted to CSL JSON in memory by Pandoc, so matching, checking and building no longer require a manual intermediate file.
+
+### Changed
+
+- Argument errors made with `--json` now return a single structured envelope and exit code 2 instead of letting `argparse` print non-JSON text and raise.
+- Manifest values are type-checked instead of coerced, malformed category metadata fails when a project opens, and strict citation checks inspect substantive blockquote and table content.
+
+## Unreleased - individual reference folders
+
+### Changed
+
+- `paperchain convert` now scans reference files in any subfolder and files each one whose parent does not identify it into an inferred title- or filename-named folder. Category names are not hardcoded; existing per-reference folders and the reserved `References/originals/` layout are preserved. When moving a source, its manifest path and context card move with it so citation keys and scoped resumes survive.
+- When a truncated folder name is the prefix of a reference filename, citation-key generation no longer repeats that prefix.
+- Regression tests cover first-time filing, migration of locked sources, retained scoped resumes and distinct keys.
+
 ## Unreleased - trial-sample start fixes
 
 ### Fixed

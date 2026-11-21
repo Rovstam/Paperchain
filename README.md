@@ -33,7 +33,7 @@ The real safeguard is `paperchain check`, not the permission files. Permissions 
 
 ## Install
 
-Requires Python 3.10+ and [pandoc](https://pandoc.org/installing.html) 2.15 or newer (pandoc is needed for DOCX import, `build`, and citeproc; `build` validates image paths itself before invoking Pandoc; PDF/TXT import and `check` do not need it).
+Requires Python 3.10+ and [pandoc](https://pandoc.org/installing.html) 2.15 or newer (pandoc is needed for DOCX import, `build`, citeproc, and BibTeX bibliography loading; PDF/TXT import and `check` with no BibTeX export do not need it).
 
 <details>
 <summary><strong>Windows</strong></summary>
@@ -85,7 +85,7 @@ Do **not** copy the repository, `.venv`, `src/` or `tests/` into each paper proj
 ## Five-minute demo
 
 ```bash
-paperchain init "My Paper" --title "My Paper" --agent opencode
+paperchain init "My Paper" --title "My Paper" --agent opencode --strict
 cd "My Paper"
 # put the original manuscript in Manuscript/ (or the project root)
 # put reference PDFs/DOCX in References/, in subfolders such as References/diabetes/
@@ -95,6 +95,18 @@ paperchain lock          # hash the references and make them read-only
 paperchain check
 paperchain build
 ```
+
+For deterministic, AI-neutral evidence discipline, use strict mode:
+
+```bash
+paperchain init "My Paper" --title "My Paper" --strict
+# or run this in an existing or adopted folder
+paperchain start --strict
+```
+
+Strict mode writes `[check] require_quotes = true` into `paper.toml`. It rejects
+any citation without exact quoted evidence and rejects substantive draft prose
+that has no citation.
 
 `init` creates the project folder, the layout, `AGENTS.md`, `paper.toml` and the OpenCode agent files. Open the folder in OpenCode and the `writer` agent is selected by default.
 
@@ -123,7 +135,7 @@ my-paper/
 │   ├── diabetes/          any subfolders you like
 │   │   ├── study.pdf
 │   │   └── review.docx
-│   └── library.json       optional CSL JSON export from Zotero
+│   └── library.json/bib   optional CSL JSON or BibTeX export
 ├── styles/                CSL files, for example vancouver.csl
 ├── Candidates/            sources an agent proposes; not citable
 ├── Paper/paper.md         the only file the writer edits
@@ -146,7 +158,7 @@ Generated page text, extracted manuscript images and build temp files are **not*
 
 `Paper/media/` is kept as a folder link to the cache (a junction on Windows, a symlink elsewhere) so image paths in `paper.md` stay short. If the OS refuses to create the link, the images fall back to a normal folder inside `Paper/` and everything still works. OpenCode may ask once for permission to read the cache folder because it is outside the project. Allow that folder; it is generated text, not a source of truth.
 
-Reference types: PDF and DOCX are the intended formats. TXT and MD are still accepted because the existing converter supports them. Anything else is ignored with a warning. Loose PDF/DOCX files directly in `References/` are moved by `paperchain convert` into a folder named after the paper's title, for example `References/Assessment/Assessment.pdf` (the title comes from the file's metadata, or from the Zotero export when exactly one entry matches it; it is cleaned for every operating system and cut at a word boundary within 10 characters, or kept whole when its first word is longer, up to 25; a second paper with the same title becomes `... (2)`). A file with no usable title goes to `References/<key>/<file>` as before. Files already in subfolders are left alone, and an identical copy of a file that is already filed is reported (`organize_skipped`) and never deleted. A file in `References/<folder>/name.pdf` gets the key `<folder>-name`, so two subfolders can both contain `review.pdf` without a collision. Projects from older versions that use `References/originals/` keep working.
+Reference types: PDF and DOCX are the intended formats. TXT and MD are still accepted because the existing converter supports them. Anything else is ignored with a warning. Loose PDF/DOCX files directly in `References/` are moved into a folder named after the paper's title. Multiple PDF/DOCX files sharing any reference folder are separated into their own title-named folders, preserving category folders and filenames and moving any context cards with them. Existing single-source folders stay as they are. Titles are cleaned for every operating system and capped at a word boundary; duplicate folder names are numbered. A file with no usable title uses its filename for the folder name. A file in `References/<folder>/name.pdf` gets a stable citation key from its folder and filename. Projects from older versions that use `References/originals/` keep working.
 
 ## Citation syntax
 
@@ -166,7 +178,7 @@ YAML metadata blocks may set document metadata such as `title`, `author`, `date`
 Zotero is not read live. Paperchain uses an export you make by hand, and the style is only enforced if you ask for it. To get Vancouver as a property of the project:
 
 1. Start the project with `paperchain init . --title "..." --style vancouver`. This writes `style = "vancouver"`, `bibliography = "References/library.json"` and `csl = "styles/vancouver.csl"` under `[build]` in `paper.toml`.
-2. In Zotero, give each item a Better BibTeX key and export the collection as **CSL JSON** to `References/library.json`.
+2. In Zotero, give each item a Better BibTeX key and export the collection as **CSL JSON** to `References/library.json` or as **BibTeX** to `References/library.bib`. Paperchain reads BibTeX through Pandoc; for `--style`, set `[build] bibliography` to the chosen export path.
 3. Download the NLM/Vancouver CSL from [Zotero's style page](https://www.zotero.org/styles/vancouver) and save it as `styles/vancouver.csl`. The page currently serves the NLM/Vancouver style (id `nlm-citation-sequence`), which is the current official style. `paperchain init --style vancouver` creates the `styles/` folder but does not bundle the CSL file.
 4. Run `paperchain match --apply`. Source keys come from filenames; this pairs each source with a Zotero entry by title and records `citation_key = "Amaeze2021"` in `paper.toml`. Only an exact normalized title is applied; a title that merely contains the other is shown as a suggestion for you to confirm. Unmatched, ambiguous and duplicate-title cases are reported instead of guessed, and can be set by hand.
 5. Run `paperchain lock`. This hashes the Zotero export and the CSL file next to the references.
@@ -182,7 +194,7 @@ What is then enforced:
 - `check` fails with `source_metadata_mismatch` once a `citation_key` is set and the CSL entry's title is not the same work as the PDF title. Without a `citation_key`, the same mismatch is a warning.
 - Two CSL entries with one id are an error as soon as a source or citation uses that id, because Paperchain and citeproc may choose different entries. An unused duplicate stays a warning.
 
-What is not enforced: whether the chosen CSL prints a locator such as `p. 12`. The official NLM/Vancouver style is numeric and does not print page locators; the page remains available to `check`. Without `style`, the previous behaviour is unchanged: `library.json` plus no `csl` gives Pandoc's default author-date style.
+What is not enforced: whether the chosen CSL prints a locator such as `p. 12`. The official NLM/Vancouver style is numeric and does not print page locators; the page remains available to `check`. Without `style`, the previous behaviour is unchanged: a configured bibliography plus no `csl` gives Pandoc's default author-date style.
 
 Citeproc output is static formatted text, not live Zotero fields; use the Zotero Word plugin if you need click-to-refresh fields. Only DOCX output is supported.
 

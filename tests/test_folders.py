@@ -9,6 +9,7 @@ import pytest
 from paperchain.check import run_check
 from paperchain.convert import run_convert
 from paperchain.folders import MAX_FOLDER_CHARS, MAX_WORD_CHARS, folder_name, usable_title
+from paperchain.locking import run_lock, run_unlock
 from paperchain.project import Project
 from paperchain.util import slugify
 
@@ -135,13 +136,129 @@ def test_a_file_without_a_usable_title_keeps_the_filename_folder(tmp_path: Path)
 
 def test_a_file_already_in_a_folder_is_left_alone(tmp_path: Path) -> None:
     project = make_project(tmp_path)
-    folder = project.references_dir / "my own shelf"
+    folder = project.references_dir / "A Perfectly Good Title Here"
     folder.mkdir()
     write_pdf(folder / "paper.pdf", ["Alpha text one."], title="A Perfectly Good Title Here")
     run_convert(project)
     assert (folder / "paper.pdf").is_file()
-    assert sorted(p.name for p in project.references_dir.iterdir() if p.is_dir()) == ["my own shelf"]
-    assert not (project.references_dir / "A Perfectly Good Title Here").exists()
+    assert sorted(p.name for p in project.references_dir.iterdir() if p.is_dir()) == [
+        "A Perfectly Good Title Here"
+    ]
+
+
+def test_a_reference_in_an_arbitrary_shelf_gets_its_own_folder(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    shelf = project.references_dir / "Research Materials"
+    shelf.mkdir()
+    write_pdf(shelf / "study.pdf", ["Alpha text one."], title="A Clinical Trial")
+
+    run_convert(project)
+
+    project = Project.open(project.root)
+    source = project.manifest.sources[0]
+    assert source.path == "References/Research Materials/A Clinical Trial/study.pdf"
+    assert (
+        project.references_dir
+        / "Research Materials"
+        / "A Clinical Trial"
+        / "study.context.md"
+    ).is_file()
+    assert run_convert(Project.open(project.root))["moved"] == []
+    write_paper(
+        project,
+        f'# T\n\nA claim [@{source.key}, p. 1: "Alpha text one."].\n',
+    )
+    run_lock(project)
+    assert run_check(Project.open(project.root)).ok
+
+
+def test_a_markdown_reference_in_an_arbitrary_folder_is_filed(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    shelf = project.references_dir / "Research Materials"
+    shelf.mkdir()
+    (shelf / "notes.md").write_text("A reference note with useful evidence.\n", encoding="utf-8")
+
+    run_convert(project)
+
+    assert (shelf / "notes" / "notes.md").is_file()
+
+
+def test_refiling_an_article_preserves_its_key_and_scoped_resume(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    shelf = project.references_dir / "Articulos"
+    shelf.mkdir()
+    pdf = shelf / "study.pdf"
+    write_pdf(pdf, ["Alpha text one."], title="A Clinical Trial")
+
+    run_convert(project, organize=False)
+    project = Project.open(project.root)
+    source = project.manifest.sources[0]
+    key = source.key
+    card = shelf / "study.context.md"
+    card.write_text(
+        card.read_text(encoding="utf-8").replace(
+            "<!-- PENDING: scoped resume not written yet -->",
+            "This study reports the finding needed for the paper and its limitations.",
+        ),
+        encoding="utf-8",
+    )
+    run_lock(project)
+
+    run_unlock(Project.open(project.root))
+    run_convert(Project.open(project.root))
+    run_lock(Project.open(project.root))
+
+    project = Project.open(project.root)
+    source = project.manifest.source(key)
+    moved_card = shelf / "A Clinical Trial" / "study.context.md"
+    assert source is not None
+    assert source.key == key
+    assert source.path == "References/Articulos/A Clinical Trial/study.pdf"
+    assert moved_card.is_file()
+    assert "This study reports the finding needed for the paper" in moved_card.read_text(encoding="utf-8")
+    assert run_check(project).ok
+
+
+def test_refiling_a_multi_source_category_preserves_keys_and_context_cards(
+    tmp_path: Path,
+) -> None:
+    project = make_project(tmp_path)
+    shelf = project.references_dir / "Resoluciones y Normativas"
+    shelf.mkdir()
+    files = {
+        "decreto.pdf": ("Decreto 0780 de 2016", "Decree text."),
+        "ley.pdf": ("Ley 485 de 1998", "Law text."),
+    }
+    for name, (title, text) in files.items():
+        write_pdf(shelf / name, [text], title=title)
+
+    run_convert(project, organize=False)
+    project = Project.open(project.root)
+    keys = {source.path.rsplit("/", 1)[-1]: source.key for source in project.manifest.sources}
+    for name in files:
+        card = shelf / f"{Path(name).stem}.context.md"
+        card.write_text(
+            card.read_text(encoding="utf-8").replace(
+                "<!-- PENDING: scoped resume not written yet -->",
+                "Keep this source's scoped note.",
+            ),
+            encoding="utf-8",
+        )
+    run_lock(project)
+
+    run_unlock(Project.open(project.root))
+    run_convert(Project.open(project.root))
+    run_lock(Project.open(project.root))
+
+    project = Project.open(project.root)
+    for name, (title, _) in files.items():
+        source = next(source for source in project.manifest.sources if source.key == keys[name])
+        folder = shelf / title
+        assert source.path == f"References/Resoluciones y Normativas/{title}/{name}"
+        assert (folder / f"{Path(name).stem}.context.md").is_file()
+        assert "Keep this source's scoped note." in (
+            folder / f"{Path(name).stem}.context.md"
+        ).read_text(encoding="utf-8")
 
 
 def test_two_different_papers_with_the_same_title_get_numbered_folders(tmp_path: Path) -> None:
@@ -198,7 +315,7 @@ def test_into_keeps_the_category_behaviour(tmp_path: Path) -> None:
     project = make_project(tmp_path)
     loose(project, "x.pdf", title="Some Title That Is Long Enough")
     run_convert(project, into="Articulos")
-    assert (project.references_dir / "Articulos" / "x.pdf").is_file()
+    assert (project.references_dir / "Articulos" / "Some Title That Is Long" / "x.pdf").is_file()
 
 
 def test_many_papers_that_start_alike_are_numbered_not_lost(tmp_path: Path) -> None:

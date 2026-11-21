@@ -24,9 +24,7 @@ from .errors import Finding, PaperchainError
 from .extract import SUPPORTED_SUFFIXES, Extraction, extract, render_text_file
 from .library import (
     KNOWN_STYLES,
-    bibtex_conversion_hint,
-    duplicate_bibliography_ids,
-    load_csl_entries,
+    load_csl,
     style_problem,
     style_sha256,
     titles_equal,
@@ -240,6 +238,60 @@ class Report:
         return not self.errors
 
 
+def _uncited_prose_lines(masked_text: str) -> list[tuple[int, str]]:
+    """Return substantive prose lines that do not carry a citation in strict mode.
+
+    This is deliberately structural rather than semantic: it does not try to
+    judge which facts need support. In strict projects, every non-template
+    prose line must point at a source so the deterministic citation and quote
+    verifier can then prove or reject the evidence.
+    """
+    issues: list[tuple[int, str]] = []
+    lines = masked_text.splitlines()
+    in_front_matter = False
+    front_matter_seen = False
+
+    for number, raw in enumerate(lines, start=1):
+        line = raw.strip()
+        if number == 1 and line.startswith("---") and line in {"---", "----"}:
+            in_front_matter = True
+            front_matter_seen = True
+            continue
+        if in_front_matter:
+            if line in {"---", "..."}:
+                in_front_matter = False
+            continue
+        if front_matter_seen and not line:
+            continue
+
+        if not line or line.startswith(("<!--", "```", "~~~")):
+            continue
+        if line.startswith("#"):
+            continue
+        while line.startswith(">"):
+            line = line[1:].lstrip()
+        if re.fullmatch(r"\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?", line):
+            continue
+        if "|" in line:
+            line = " ".join(part.strip() for part in line.strip("|").split("|"))
+        if re.match(r"^ {0,3}(?:[-*_])(?: {0,3}(?:[-*_])){2,}\s*$", line):
+            continue
+        if re.match(r"^ {0,3}(?:[-+*]|\d+[.)])\s+", line):
+            line = re.sub(r"^ {0,3}(?:[-+*]|\d+[.)])\s+", "", line).strip()
+        if not line:
+            continue
+        if "[@ " in line or "[@" not in line and line.startswith("[") and line.endswith("]"):
+            continue
+        if not re.search(r"\[@[^\]]+\]", line):
+            prose = re.sub(r"<[^>]+>", " ", line)
+            prose = re.sub(r"[*_`]", "", prose)
+            prose = " ".join(prose.split())
+            if word_count(prose) >= 5:
+                preview = prose if len(prose) <= 100 else prose[:97].rstrip() + "..."
+                issues.append((number, preview))
+    return issues
+
+
 def _load_text(
     project: Project, key: str
 ) -> tuple[list[str] | None, dict | None, str | None]:
@@ -367,7 +419,7 @@ def _check_bibliography_and_style(project: Project, report: Report, bibliography
                     "bibliography_missing",
                     "the Zotero export recorded by `lock` is gone",
                     file="paper.toml",
-                    hint="restore References/library.json, or run `paperchain lock --accept-changes` if you removed it on purpose",
+                    hint="restore the configured bibliography, or run `paperchain lock --accept-changes` if you removed it on purpose",
                 )
             )
         elif sha256_file(bibliography) != manifest.bibliography_sha256:
@@ -429,7 +481,7 @@ def _check_bibliography_and_style(project: Project, report: Report, bibliography
                 "style_requires_bibliography",
                 f"style {style} needs the Zotero export; without it the built-in author-year citations would be used",
                 file="paper.toml",
-                hint="export CSL JSON (Better BibTeX keys) from Zotero to References/library.json",
+                hint="export CSL JSON or BibTeX (with Better BibTeX keys) from Zotero and configure it under [build]",
             )
         )
     if csl is None or not csl.is_file():
@@ -733,6 +785,19 @@ def run_check(
             )
         )
 
+    if strict or manifest.require_quotes:
+        for line, preview in _uncited_prose_lines(masked_text):
+            report.errors.append(
+                Finding(
+                    "uncited_prose",
+                    "prose without a source citation",
+                    file="Paper/paper.md",
+                    line=line,
+                    data={"text": preview},
+                    hint='cite the source and copy exact evidence: [@key, p. 12: "exact words"]',
+                )
+            )
+
     citations = parse_citations(text)
     stats["citations"] = len(citations)
     cited_source_keys: set[str] = set()
@@ -744,9 +809,16 @@ def run_check(
     duplicate_ids_used: set[str] = set()
     if bibliography is not None:
         try:
-            bibliography_entries = load_csl_entries(bibliography)
+            for entry in load_csl(bibliography):
+                key = str(entry.get("id", "")).strip()
+                if not key:
+                    continue
+                if key in bibliography_entries:
+                    if key not in duplicate_ids:
+                        duplicate_ids.append(key)
+                    continue
+                bibliography_entries[key] = entry
             bibliography_key_set = set(bibliography_entries)
-            duplicate_ids = duplicate_bibliography_ids(bibliography)
             duplicate_ids_used = {
                 manifest.citation_key_for(source)
                 for source in manifest.sources
@@ -754,14 +826,6 @@ def run_check(
             }
         except PaperchainError as exc:
             code, message, hint = exc.code, exc.message, exc.hint
-            bibtex = project.references_dir / "library.bib"
-            if code == "bibliography_missing" and bibtex.is_file():
-                code = "bibliography_bibtex_unsupported"
-                message = (
-                    f"{project.relative(bibtex)} is a BibTeX export, "
-                    f"but {project.relative(bibliography)} does not exist"
-                )
-                hint = bibtex_conversion_hint(bibtex)
             report.errors.append(
                 Finding(
                     code,

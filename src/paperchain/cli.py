@@ -27,6 +27,28 @@ EXIT_OK = 0
 EXIT_FINDINGS = 1
 EXIT_CANNOT_RUN = 2
 
+COMMAND_NAMES = {
+    "help",
+    "init",
+    "organize",
+    "import",
+    "convert",
+    "lock",
+    "start",
+    "context",
+    "unlock",
+    "match",
+    "check",
+    "build",
+    "doctor",
+}
+
+
+class _UsageError(Exception):
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
 
 class _Parser(argparse.ArgumentParser):
     """ArgumentParser that never accepts abbreviated long options."""
@@ -34,6 +56,9 @@ class _Parser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         kwargs.setdefault("allow_abbrev", False)
         super().__init__(*args, **kwargs)
+
+    def error(self, message: str) -> None:
+        raise _UsageError(message)
 
 
 def _project(args: argparse.Namespace) -> Project:
@@ -93,6 +118,7 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
             git=args.git,
             adopt=args.adopt,
             style=args.style or "",
+            strict=args.strict,
         )
         verb = "adopted" if result["data"].get("adopted") else "created"
         summary = f'{verb} "{result["title"]}" in {result["root"]} (adapter: {result["adapter"]})'
@@ -194,6 +220,7 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
             title=args.title,
             agent=args.agent,
             manuscript=args.manuscript,
+            strict=args.strict,
         )
         needs = result["data"]["needs_human"]
         done = sum(1 for item in result["steps"] if item["status"] == "done")
@@ -399,6 +426,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["vancouver"],
         help="pin the citation style in paper.toml; check and build then refuse to fall back to another style",
     )
+    p_init.add_argument(
+        "--strict",
+        action="store_true",
+        help="require quoted evidence for every citation in this project",
+    )
     p_init.add_argument("--git", action="store_true", help="run git init in the new project")
 
     p_organize = sub.add_parser(
@@ -498,6 +530,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_start.add_argument("--title", help="title for a new project (default: the folder name)")
     p_start.add_argument("--agent", default="opencode", help="agent adapter for a new project (default: opencode)")
     p_start.add_argument("--manuscript", metavar="FILE", help="the original manuscript, when more than one file could be it")
+    p_start.add_argument(
+        "--strict",
+        action="store_true",
+        help="require quoted evidence for every citation in the project",
+    )
     p_context = sub.add_parser(
         "context",
         parents=[common],
@@ -515,7 +552,7 @@ def build_parser() -> argparse.ArgumentParser:
         "match",
         parents=[common],
         help="map Zotero/Better BibTeX ids onto sources by title",
-        description="Pair each source with a CSL JSON entry and record its citation_key. Reports unmatched, ambiguous and duplicate-title cases; --apply writes paper.toml.",
+        description="Pair each source with a CSL JSON or BibTeX entry and record its citation_key. Reports unmatched, ambiguous and duplicate-title cases; --apply writes paper.toml.",
     )
     p_match.add_argument(
         "--apply",
@@ -650,12 +687,31 @@ def print_human(payload: dict[str, Any]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except (AttributeError, OSError):
+            pass
     parser = build_parser()
-    args = parser.parse_args(argv)
-    json_mode = bool(getattr(args, "json", False))
+    raw_args = list(argv) if argv is not None else sys.argv[1:]
+    json_mode = "--json" in raw_args
 
     try:
+        args = parser.parse_args(raw_args)
+        json_mode = bool(getattr(args, "json", False))
         payload = dispatch(args)
+    except _UsageError as exc:
+        command = next((arg for arg in raw_args if arg in COMMAND_NAMES), "unknown")
+        if not json_mode:
+            parser.print_usage(sys.stderr)
+            parser.exit(EXIT_CANNOT_RUN, f"{parser.prog}: error: {exc.message}\n")
+        payload = _envelope(
+            command,
+            False,
+            exc.message,
+            errors=[Finding("usage", exc.message)],
+            exit_code=EXIT_CANNOT_RUN,
+        )
     except PaperchainError as exc:
         finding = exc.as_finding()
         exit_code = (
@@ -690,7 +746,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if json_mode:
-        json.dump(payload, sys.stdout, ensure_ascii=False, indent=2)
+        json.dump(payload, sys.stdout, ensure_ascii=False, indent=2, sort_keys=True)
         sys.stdout.write("\n")
     else:
         print_human(payload)

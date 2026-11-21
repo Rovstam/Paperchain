@@ -96,6 +96,7 @@ class Project:
 
     def validate(self) -> None:
         """Reject manifests that could steer the tool outside the project."""
+        self.categories
         references = (self.root / "References").resolve()
         project_id = self.manifest.project_id
         if project_id and not re.fullmatch(r"[0-9a-f]{32}", project_id):
@@ -301,12 +302,7 @@ class Project:
 
     @property
     def bibliography_path(self) -> Path | None:
-        """The project bibliography: CSL JSON, or a BibTeX export to convert.
-
-        `library.bib` is returned only so `check` and `build` can report the
-        conversion command. Nothing parses BibTeX; consumers raise
-        `bibliography_bibtex_unsupported` with the `pandoc -f bibtex` hint.
-        """
+        """The configured CSL JSON or BibTeX bibliography, if present."""
         configured = self.manifest.bibliography.strip()
         if configured:
             return (self.root / configured).resolve()
@@ -340,20 +336,34 @@ class Project:
             return []
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-            return []
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise PaperchainError(
+                "categories_invalid",
+                f"cannot read {self.relative(path)}: {exc}",
+                hint="fix References/.paperchain-categories.json or delete it",
+            ) from exc
         raw = data.get("categories") if isinstance(data, dict) else data
         if not isinstance(raw, list):
-            return []
+            raise PaperchainError(
+                "categories_invalid",
+                f"{self.relative(path)} must contain a list or a {{'categories': [...]}} object",
+            )
         categories: list[str] = []
         seen: set[str] = set()
         for item in raw:
             if not isinstance(item, str):
-                continue
+                raise PaperchainError(
+                    "categories_invalid",
+                    f"{self.relative(path)} contains a category that is not a string",
+                )
             try:
                 name = category_name(item)
-            except PaperchainError:
-                continue
+            except PaperchainError as exc:
+                raise PaperchainError(
+                    "categories_invalid",
+                    f"{self.relative(path)}: {exc.message}",
+                    hint=exc.hint,
+                ) from exc
             folded = name.casefold()
             if folded in seen:
                 continue
@@ -405,14 +415,16 @@ class Project:
             self.originals_dir.resolve(),
         }:
             return shorten_key(slugify(path.stem))
-        # References/study2024/study2024.pdf is the organized form: keep the
-        # key clean instead of turning it into study2024-study2024.
-        if slugify(path.parent.name) == slugify(path.stem):
-            return shorten_key(slugify(path.stem))
-        # Known issue left for a future audit: when the folder name is a
-        # truncated copy of a long filename, this branch does not recognise it
-        # as the organized form and the key repeats part of the title.
-        return shorten_key(f"{slugify(path.parent.name)}-{slugify(path.stem)}")
+        # A folder named after the source, or a truncated prefix of its title,
+        # is the organized form; do not repeat it in the citation key.
+        parent_key = slugify(path.parent.name)
+        stem_key = slugify(path.stem)
+        if stem_key == parent_key or stem_key.startswith(parent_key + "-"):
+            return shorten_key(stem_key)
+        numbered_parent = re.sub(r"-\d+$", "", parent_key)
+        if numbered_parent != parent_key and stem_key.startswith(numbered_parent + "-"):
+            return shorten_key(stem_key)
+        return shorten_key(f"{parent_key}-{stem_key}")
 
     def reference_key_candidates(self, path: Path) -> list[str]:
         """Keys to try, starting with the normal key and adding ancestors.
@@ -431,7 +443,18 @@ class Project:
             self.originals_dir.resolve(),
         }:
             stem = slugify(path.stem)
-            for depth in range(2, len(parts) + 1):
+            parent_key = slugify(parts[-1])
+            numbered_parent = re.sub(r"-\d+$", "", parent_key)
+            if (
+                stem == parent_key
+                or stem.startswith(parent_key + "-")
+                or (
+                    numbered_parent != parent_key
+                    and stem.startswith(numbered_parent + "-")
+                )
+            ):
+                parts = parts[:-1]
+            for depth in range(1, len(parts) + 1):
                 prefix = "-".join(slugify(part) for part in parts[-depth:])
                 candidate = shorten_key(f"{prefix}-{stem}")
                 if candidate not in candidates:

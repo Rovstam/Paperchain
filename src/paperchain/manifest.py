@@ -48,6 +48,32 @@ def _int_field(data: dict[str, Any], name: str, key: str) -> int:
     )
 
 
+def _table(data: dict[str, Any], name: str) -> dict[str, Any]:
+    value = data.get(name, {})
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise PaperchainError(
+            "manifest_invalid",
+            f"[{name}] in {MANIFEST_NAME} must be a TOML table",
+        )
+    return value
+
+
+def _string(
+    data: dict[str, Any], name: str, *, owner: str = MANIFEST_NAME
+) -> str:
+    value = data.get(name, "")
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise PaperchainError(
+            "manifest_invalid",
+            f"{name} in {owner} must be a string, not {value!r}",
+        )
+    return value
+
+
 @dataclass
 class Source:
     key: str
@@ -68,8 +94,8 @@ class Source:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Source":
-        key = str(data.get("key", "")).strip()
-        path = str(data.get("path", "")).strip()
+        key = _string(data, "key", owner="a [[sources]] entry").strip()
+        path = _string(data, "path", owner="a [[sources]] entry").strip()
         if not key or not path:
             raise PaperchainError(
                 "manifest_invalid",
@@ -79,21 +105,27 @@ class Source:
         year = data.get("year")
         if isinstance(year, str) and year.strip().isdigit():
             year = int(year.strip())
-        if not isinstance(year, int):
+        elif year is None or year == "":
             year = None
+        elif isinstance(year, bool) or not isinstance(year, int):
+            raise PaperchainError(
+                "manifest_invalid",
+                f"year for source {key!r} must be a number",
+                hint=f"edit {MANIFEST_NAME} by hand, or delete the entry and run `paperchain convert`",
+            )
         return cls(
             key=key,
             path=path,
-            citation_key=str(data.get("citation_key", "") or "").strip(),
-            title=str(data.get("title", "") or ""),
-            authors=str(data.get("authors", "") or ""),
+            citation_key=_string(data, "citation_key", owner=f"source {key!r}").strip(),
+            title=_string(data, "title", owner=f"source {key!r}"),
+            authors=_string(data, "authors", owner=f"source {key!r}"),
             year=year,
-            sha256=str(data.get("sha256", "") or ""),
+            sha256=_string(data, "sha256", owner=f"source {key!r}"),
             size=_int_field(data, "size", key),
             pages=_int_field(data, "pages", key),
-            text_sha256=str(data.get("text_sha256", "") or ""),
-            converter=str(data.get("converter", "") or ""),
-            converted_at=str(data.get("converted_at", "") or ""),
+            text_sha256=_string(data, "text_sha256", owner=f"source {key!r}"),
+            converter=_string(data, "converter", owner=f"source {key!r}"),
+            converted_at=_string(data, "converted_at", owner=f"source {key!r}"),
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -156,37 +188,57 @@ class Manifest:
             ) from exc
 
         version = data.get("schema_version", SCHEMA_VERSION)
-        if not isinstance(version, int) or version > SCHEMA_VERSION:
+        if isinstance(version, bool) or not isinstance(version, int):
+            raise PaperchainError(
+                "manifest_invalid",
+                "schema_version in paper.toml must be an integer",
+            )
+        if version > SCHEMA_VERSION:
             raise PaperchainError(
                 "manifest_version",
                 f"{path.name} was written by a newer paperchain (schema {version!r})",
                 hint="upgrade paperchain, or restore the file from version control",
             )
 
-        build = data.get("build", {}) or {}
-        check = data.get("check", {}) or {}
-        manuscript = data.get("manuscript", {}) or {}
-        raw_sources = data.get("sources", []) or []
+        build = _table(data, "build")
+        check = _table(data, "check")
+        manuscript = _table(data, "manuscript")
+        raw_sources = data.get("sources", [])
+        if raw_sources is None:
+            raw_sources = []
         if not isinstance(raw_sources, list) or not all(isinstance(s, dict) for s in raw_sources):
             raise PaperchainError("manifest_invalid", "[[sources]] must be a list of tables")
 
+        require_quotes = check.get("require_quotes", False)
+        if not isinstance(require_quotes, bool):
+            raise PaperchainError(
+                "manifest_invalid",
+                "check.require_quotes in paper.toml must be true or false",
+            )
+
         return cls(
-            title=str(data.get("title", "") or ""),
-            slug=str(data.get("slug", "") or ""),
-            project_id=str(data.get("project_id", "") or ""),
-            created=str(data.get("created", "") or ""),
-            locked_at=str(data.get("locked_at", "") or ""),
-            build_output=str(build.get("output", "") or ""),
-            reference_doc=str(build.get("reference_doc", "") or ""),
-            bibliography=str(build.get("bibliography", "") or ""),
-            csl=str(build.get("csl", "") or ""),
-            style=str(build.get("style", "") or "").strip().lower(),
-            bibliography_sha256=str(build.get("bibliography_sha256", "") or ""),
-            csl_sha256=str(build.get("csl_sha256", "") or ""),
-            manuscript_path=str(manuscript.get("path", "") or ""),
-            manuscript_sha256=str(manuscript.get("sha256", "") or ""),
-            manuscript_imported_at=str(manuscript.get("imported_at", "") or ""),
-            require_quotes=bool(check.get("require_quotes", False)),
+            title=_string(data, "title"),
+            slug=_string(data, "slug"),
+            project_id=_string(data, "project_id"),
+            created=_string(data, "created"),
+            locked_at=_string(data, "locked_at"),
+            build_output=_string(build, "output", owner="[build]"),
+            reference_doc=_string(build, "reference_doc", owner="[build]"),
+            bibliography=_string(build, "bibliography", owner="[build]"),
+            csl=_string(build, "csl", owner="[build]"),
+            style=_string(build, "style", owner="[build]").strip().lower(),
+            bibliography_sha256=_string(
+                build, "bibliography_sha256", owner="[build]"
+            ),
+            csl_sha256=_string(build, "csl_sha256", owner="[build]"),
+            manuscript_path=_string(manuscript, "path", owner="[manuscript]"),
+            manuscript_sha256=_string(
+                manuscript, "sha256", owner="[manuscript]"
+            ),
+            manuscript_imported_at=_string(
+                manuscript, "imported_at", owner="[manuscript]"
+            ),
+            require_quotes=require_quotes,
             sources=[Source.from_dict(item) for item in raw_sources],
             schema_version=version,
         )
@@ -315,7 +367,7 @@ class Manifest:
         return self.build_output or f"Output/{self.slug or 'paper'}.docx"
 
 
-def new_manifest(title: str, style: str = "") -> Manifest:
+def new_manifest(title: str, style: str = "", require_quotes: bool = False) -> Manifest:
     slug = slugify(title)
     style = style.strip().lower()
     return Manifest(
@@ -327,4 +379,5 @@ def new_manifest(title: str, style: str = "") -> Manifest:
         style=style,
         bibliography="References/library.json" if style else "",
         csl=f"styles/{style}.csl" if style else "",
+        require_quotes=require_quotes,
     )

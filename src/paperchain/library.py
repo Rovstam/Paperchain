@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
+import subprocess
 import unicodedata
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -9,42 +11,73 @@ from pathlib import Path
 from .errors import PaperchainError
 
 
-def bibtex_conversion_hint(path: Path) -> str:
-    return (
-        "Paperchain reads CSL JSON, not BibTeX; convert the export first: "
-        f'pandoc -f bibtex -t csljson "{path.as_posix()}" -o References/library.json '
-        "and point [build] bibliography at References/library.json"
-    )
+def _pandoc_csl_json(path: Path) -> list[dict]:
+    executable = shutil.which("pandoc")
+    if not executable:
+        raise PaperchainError(
+            "pandoc_missing",
+            "pandoc is required to read a BibTeX bibliography",
+            hint="install pandoc from https://pandoc.org/installing.html, or export CSL JSON from Zotero instead",
+        )
+    try:
+        completed = subprocess.run(
+            [executable, "--from", "bibtex", "--to", "csljson", str(path)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except OSError as exc:
+        raise PaperchainError(
+            "bibliography_invalid",
+            f"cannot read the bibliography {path}: {exc}",
+        ) from exc
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()
+        raise PaperchainError(
+            "bibliography_invalid",
+            f"Pandoc could not parse {path}: {detail[-500:]}",
+            hint="fix the BibTeX entry, or export the collection as CSL JSON",
+        )
+    try:
+        data = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise PaperchainError(
+            "bibliography_invalid",
+            f"Pandoc returned invalid CSL JSON for {path}: {exc}",
+            hint="upgrade Pandoc, or export CSL JSON from Zotero",
+        ) from exc
+    if not isinstance(data, list) or not all(isinstance(entry, dict) for entry in data):
+        raise PaperchainError(
+            "bibliography_invalid",
+            f"{path} did not produce a CSL JSON list of references",
+        )
+    return data
 
 
 def load_csl(path: Path) -> list[dict]:
-    """Load a CSL JSON bibliography exported by Zotero or Better BibTeX."""
-    if path.suffix.lower() in {".bib", ".bibtex"}:
-        raise PaperchainError(
-            "bibliography_bibtex_unsupported",
-            f"{path} is a BibTeX file; Paperchain reads CSL JSON",
-            hint=bibtex_conversion_hint(path),
-        )
+    """Load a CSL JSON or BibTeX bibliography exported by Zotero."""
     if not path.is_file():
         raise PaperchainError(
             "bibliography_missing",
             f"the bibliography {path} does not exist",
             hint="export CSL JSON from Zotero to References/library.json, or fix [build] bibliography in paper.toml",
         )
+    if path.suffix.lower() in {".bib", ".bibtex"}:
+        return _pandoc_csl_json(path)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise PaperchainError(
             "bibliography_invalid",
             f"cannot read the bibliography {path}: {exc}",
-            hint="export it again from Zotero as CSL JSON; a BibTeX export must be converted with "
-            f'pandoc -f bibtex -t csljson "{path.as_posix()}" -o References/library.json',
+            hint="export it again from Zotero as CSL JSON or BibTeX",
         ) from exc
     if not isinstance(data, list) or not all(isinstance(entry, dict) for entry in data):
         raise PaperchainError(
             "bibliography_invalid",
             f"{path} is not a CSL JSON list of references",
-            hint=bibtex_conversion_hint(path),
+            hint="export a CSL JSON list from Zotero, or point bibliography at a .bib export",
         )
     return data
 

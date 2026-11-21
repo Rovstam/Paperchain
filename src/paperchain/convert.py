@@ -89,17 +89,33 @@ def _same_file_in_title_folder(references: Path, name: str, path: Path) -> Path 
     return None
 
 
+def _is_in_own_folder(path: Path, title: str, project: Project) -> bool:
+    """Whether the file's parent already identifies this reference."""
+    names = {
+        folder_name(title or path.stem, limit=limit).casefold()
+        for limit in (10, 25, max(25, len(title)))
+    }
+    names.add(project.reference_key(path).casefold())
+    parent = path.parent.name.casefold()
+    return any(
+        parent == name or re.fullmatch(re.escape(name) + r" \(\d+\)", parent)
+        for name in names
+        if name
+    )
+
+
 def organize_loose_references(
     project: Project, into: str | None = None
 ) -> tuple[list[str], list[Finding]]:
-    """Move loose PDF/DOCX files out of the References root.
+    """File folderless supported references in inferred per-source folders.
 
-    Without `into` each file goes to `References/<key>/<file>`. With a
-    category, the files go to `References/<category>/<file>` instead, so the
-    reference tree keeps the subject folders the human or agent chose.
+    Root files go into a title-named folder when possible, or a key-named
+    folder when not. `into` first places root files in the chosen category.
 
-    Only files directly in References/ are moved. Nested files, legacy
-    References/originals/ layouts and bibliography exports are left alone.
+    Any supported reference file directly inside a folder that does not
+    identify that reference is folderless and gets its own child folder.
+    Existing per-reference folders and the surrounding folder structure are
+    preserved without relying on category names.
     """
     moved: list[str] = []
     warnings: list[Finding] = []
@@ -110,7 +126,7 @@ def organize_loose_references(
     for path in sorted(project.references_dir.iterdir()):
         if not path.is_file() or path.name.startswith("."):
             continue
-        if path.suffix.lower() not in {".pdf", ".docx"}:
+        if path.suffix.lower() not in SUPPORTED_SUFFIXES:
             continue
         key = project.reference_key(path)
         if category:
@@ -156,6 +172,52 @@ def organize_loose_references(
         for source in project.manifest.sources:
             if source.path == old_rel:
                 source.path = new_rel
+        moved.append(f"{old_rel} -> {new_rel}")
+
+    references_root = project.references_dir.resolve()
+    folderless: list[tuple[Path, str]] = []
+    for path in sorted(project.references_dir.rglob("*")):
+        if (
+            not path.is_file()
+            or path.name.startswith(".")
+            or path.name.casefold().endswith(".context.md")
+            or path.suffix.lower() not in SUPPORTED_SUFFIXES
+        ):
+            continue
+        relative = path.relative_to(project.references_dir)
+        if len(relative.parts) <= 1:
+            # Root-level references have already been handled above. In
+            # particular, do not move a duplicate that was intentionally kept.
+            continue
+        if (
+            any(part.startswith(".") for part in relative.parts)
+            or relative.parts[0].casefold() in {"_text", "originals"}
+        ):
+            continue
+        if not path.resolve().is_relative_to(references_root):
+            continue
+        title = library_title(
+            project.bibliography_path,
+            usable_title(peek_title(path)),
+        )
+        if _is_in_own_folder(path, title, project):
+            continue
+        folder = folder_name(title or path.stem, limit=25) or project.reference_key(path)
+        folderless.append((path, folder))
+
+    for path, folder in folderless:
+        target_dir = free_folder(path.parent, folder)
+        target = target_dir / path.name
+        old_rel = rel_posix(path, project.root)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(path), str(target))
+        new_rel = rel_posix(target, project.root)
+        for source in project.manifest.sources:
+            if source.path == old_rel:
+                source.path = new_rel
+        card = path.with_name(path.stem + ".context.md")
+        if card.is_file():
+            shutil.move(str(card), str(target_dir / card.name))
         moved.append(f"{old_rel} -> {new_rel}")
 
     return moved, warnings

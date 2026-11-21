@@ -21,7 +21,7 @@ from paperchain.locking import run_lock
 from paperchain.check import front_matter_keys, run_check
 from paperchain.convert import run_convert
 from paperchain.errors import PaperchainError
-from paperchain.library import style_problem
+from paperchain.library import load_csl, style_problem
 from paperchain.match_cmd import run_match
 from paperchain.project import Project
 
@@ -355,37 +355,43 @@ def test_the_reference_list_detector_reads_citeproc_output(tmp_path: Path) -> No
 # -- 4. .bib guidance ------------------------------------------------------
 
 
-def test_a_bibtex_export_is_reported_with_a_conversion_hint(tmp_path: Path) -> None:
+def test_a_missing_configured_bibliography_does_not_fall_back_silently(
+    tmp_path: Path,
+) -> None:
     project = make_project(tmp_path)
     project.manifest.bibliography = "References/library.json"
     project.save()
     (project.references_dir / "library.bib").write_text("@article{,}", encoding="utf-8")
 
     report = run_check(Project.open(project.root))
-    error = next(f for f in report.errors if f.code == "bibliography_bibtex_unsupported")
-    assert "csljson" in (error.hint or "")
+    assert "bibliography_missing" in codes(report)
 
 
-def test_a_bibtex_path_is_rejected_before_pandoc_sees_it(tmp_path: Path) -> None:
+@pytest.mark.skipif(not shutil.which("pandoc"), reason="pandoc is not installed")
+def test_a_bibtex_path_is_read_as_a_bibliography(tmp_path: Path) -> None:
     project = make_project(tmp_path)
     project.manifest.bibliography = "References/library.bib"
     project.save()
     (project.references_dir / "library.bib").write_text("@article{a, title={T}}", encoding="utf-8")
 
+    entries = load_csl(project.references_dir / "library.bib")
+    assert entries[0]["id"] == "a"
     report = run_check(Project.open(project.root))
-    assert "bibliography_bibtex_unsupported" in codes(report)
+    assert not any(code.startswith("bibliography_") for code in codes(report))
 
 
-def test_a_bibtex_only_project_is_reported_with_the_conversion_hint(tmp_path: Path) -> None:
+@pytest.mark.skipif(not shutil.which("pandoc"), reason="pandoc is not installed")
+def test_a_bibtex_only_project_is_detected_and_read(tmp_path: Path) -> None:
     project = make_project(tmp_path)
     (project.references_dir / "library.bib").write_text("@article{a, title={T}}", encoding="utf-8")
 
     report = run_check(Project.open(project.root))
-    error = next(f for f in report.errors if f.code == "bibliography_bibtex_unsupported")
-    assert "csljson" in (error.hint or "")
+    assert not any(code.startswith("bibliography_") for code in codes(report))
 
 
-def test_lock_points_a_bibtex_export_at_the_conversion(tmp_path: Path) -> None:
+def test_lock_accepts_bibtex_and_reports_other_missing_style_files(
+    tmp_path: Path,
+) -> None:
     project = make_project(tmp_path)
     add_pdf(project, "study2024.pdf", ["Alpha text one."])
     run_convert(project)
@@ -396,7 +402,7 @@ def test_lock_points_a_bibtex_export_at_the_conversion(tmp_path: Path) -> None:
 
     with pytest.raises(PaperchainError) as error:
         run_lock(Project.open(project.root))
-    assert "csljson" in (error.value.hint or "") + error.value.message
+    assert "CSL" in error.value.message
 
 
 # -- 5. style validation ---------------------------------------------------

@@ -12,7 +12,7 @@ def run_match(
     apply: bool = False,
     overwrite: bool = False,
 ) -> dict[str, Any]:
-    """Pair every source with a CSL entry by title and record its Zotero id.
+    """Pair every source with a bibliography entry by title and record its id.
 
     Source keys come from filenames; Zotero ids do not. Without this mapping a
     citation cannot satisfy `check` and citeproc at the same time. Matching is
@@ -24,8 +24,8 @@ def run_match(
     if bibliography is None:
         raise PaperchainError(
             "bibliography_missing",
-            "there is no CSL JSON export to match against",
-            hint="export the Zotero collection as CSL JSON to References/library.json",
+            "there is no bibliography export to match against",
+            hint="export the Zotero collection as CSL JSON or BibTeX to References/library.json or References/library.bib",
         )
 
     entries: dict[str, dict] = {}

@@ -50,6 +50,53 @@ def test_init_creates_the_layout_and_adapter(tmp_path: Path) -> None:
     assert "{{" not in (root / "Paper/paper.md").read_text(encoding="utf-8")
 
 
+def test_init_strict_requires_quotes_in_the_manifest(tmp_path: Path) -> None:
+    root = tmp_path / "strict-paper"
+    run_init(str(root), title="Strict Paper", strict=True)
+    project = Project.open(root)
+    assert project.manifest.require_quotes is True
+    assert "[check]" in (root / "paper.toml").read_text(encoding="utf-8")
+    assert "require_quotes = true" in (root / "paper.toml").read_text(encoding="utf-8")
+
+
+def test_strict_check_rejects_uncited_substantive_prose(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    project.manifest.require_quotes = True
+    project.save()
+    add_pdf(project, "study2024.pdf", ["Alpha text one."])
+    run_convert(project)
+    project = Project.open(project.root)
+    write_paper(
+        project,
+        "# Results\n\nThe intervention doubled treatment effectiveness in every measured cohort.\n",
+    )
+    report = run_check(project)
+    assert "uncited_prose" in [finding.code for finding in report.errors]
+
+
+def test_strict_check_does_not_skip_blockquotes_or_tables(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    project.manifest.require_quotes = True
+    project.save()
+    add_pdf(project, "study2024.pdf", ["Alpha text one."])
+    run_convert(project)
+    project = Project.open(project.root)
+    write_paper(
+        project,
+        "# Results\n\n"
+        "> This substantive blockquote has no supporting citation.\n\n"
+        "| Outcome | Value |\n"
+        "| --- | --- |\n"
+        "| The treatment reduced symptoms in every cohort. |\n",
+    )
+    findings = [
+        finding
+        for finding in run_check(project).errors
+        if finding.code == "uncited_prose"
+    ]
+    assert [finding.line for finding in findings] == [3, 7]
+
+
 def test_init_refuses_to_overwrite(tmp_path: Path) -> None:
     root = tmp_path / "paper"
     run_init(str(root), title="One")

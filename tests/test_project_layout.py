@@ -97,11 +97,11 @@ def test_convert_scans_reference_subfolders(tmp_path: Path) -> None:
     run_convert(project)
 
     project = Project.open(project.root)
-    source = project.manifest.source("diabetes-study2024")
+    source = project.manifest.source("study2024")
     assert source is not None
-    assert source.path == "References/diabetes/study2024.pdf"
+    assert source.path == "References/diabetes/study2024/study2024.pdf"
 
-    write_paper(project, '# T\n\nA claim [@diabetes-study2024, p. 1: "The sample contains forty two cases."].\n')
+    write_paper(project, '# T\n\nA claim [@study2024, p. 1: "The sample contains forty two cases."].\n')
     report = run_check(Project.open(project.root))
     assert report.ok, [finding.message for finding in report.errors]
     assert report.stats["quotes_verified"] == 1
@@ -140,7 +140,7 @@ def test_same_filename_in_same_named_subfolders_gets_distinct_keys(
 
     project = Project.open(project.root)
     keys = {source.key for source in project.manifest.sources}
-    assert keys == {"articulos-2024-review", "normas-2024-review"}
+    assert keys == {"2024-review", "normas-2024-review"}
 
 
 def test_long_reference_titles_get_short_distinct_keys(tmp_path: Path) -> None:
@@ -159,7 +159,7 @@ def test_long_reference_titles_get_short_distinct_keys(tmp_path: Path) -> None:
     keys = {source.key for source in project.manifest.sources}
     assert len(keys) == 2
     assert all(len(key) <= 60 for key in keys)
-    assert all(key.startswith("articulos-a-comprehensive") for key in keys)
+    assert all(key.startswith("a-comprehensive-evaluation") for key in keys)
 
 
 def test_adding_a_colliding_file_does_not_rename_an_existing_key(
@@ -170,7 +170,7 @@ def test_adding_a_colliding_file_does_not_rename_an_existing_key(
     articulos.mkdir(parents=True)
     write_pdf(articulos / "review.pdf", ["Alpha text one."])
     run_convert(project)
-    assert Project.open(project.root).manifest.source("2024-review") is not None
+    assert Project.open(project.root).manifest.source("review") is not None
 
     normas = project.references_dir / "Normas" / "2024"
     normas.mkdir(parents=True)
@@ -178,8 +178,8 @@ def test_adding_a_colliding_file_does_not_rename_an_existing_key(
     run_convert(Project.open(project.root))
 
     project = Project.open(project.root)
+    assert project.manifest.source("review") is not None
     assert project.manifest.source("2024-review") is not None
-    assert project.manifest.source("normas-2024-review") is not None
 
 
 def test_convert_into_keeps_a_loose_file_in_its_category(tmp_path: Path) -> None:
@@ -193,13 +193,14 @@ def test_convert_into_keeps_a_loose_file_in_its_category(tmp_path: Path) -> None
     target = (
         project.references_dir
         / "Normas, Resoluciones y Normativas"
+        / "Decreto 0780 de 2016"
         / "Decreto 0780 de 2016.pdf"
     )
     assert target.is_file()
     project = Project.open(project.root)
     source = project.manifest.sources[0]
     assert source.path == (
-        "References/Normas, Resoluciones y Normativas/Decreto 0780 de 2016.pdf"
+        "References/Normas, Resoluciones y Normativas/Decreto 0780 de 2016/Decreto 0780 de 2016.pdf"
     )
 
 
@@ -334,3 +335,21 @@ def test_build_with_a_zotero_library_uses_citeproc(tmp_path: Path) -> None:
         xml = archive.read("word/document.xml").decode("utf-8")
     assert "Doe" in xml
     assert "2024" in xml
+
+
+@pytest.mark.skipif(not PANDOC, reason="pandoc is not installed")
+def test_build_accepts_a_bibtex_bibliography(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    add_pdf(project, "study2024.pdf", ["Alpha text one."])
+    run_convert(project)
+    project = Project.open(project.root)
+    write_paper(project, '# T\n\nA claim [@study2024, p. 1: "Alpha text one."].\n')
+    (project.references_dir / "library.bib").write_text(
+        "@article{study2024, title={A Study}, author={Doe, Jane}, year={2024}}\n",
+        encoding="utf-8",
+    )
+
+    run_lock(Project.open(project.root))
+    result = run_build(Project.open(project.root))
+    assert result.output is not None
+    assert result.output.is_file()

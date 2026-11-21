@@ -135,6 +135,7 @@ def run_init(
     git: bool = False,
     adopt: bool = False,
     style: str = "",
+    strict: bool = False,
 ) -> dict[str, Any]:
     destination = Path(directory).expanduser().resolve()
 
@@ -195,7 +196,7 @@ def run_init(
                 backups.append(rel_posix(saved, destination))
     copied, skipped = _copy_tree(template_root, destination, context, overwrite)
 
-    manifest = new_manifest(resolved_title, style=style)
+    manifest = new_manifest(resolved_title, style=style, require_quotes=strict)
     manifest.save(destination / MANIFEST_NAME)
 
     adapter_files, skipped_adapters = _copy_adapter(

@@ -64,6 +64,7 @@ def run_start(
     title: str | None = None,
     agent: str = "opencode",
     manuscript: str | None = None,
+    strict: bool = False,
 ) -> dict[str, Any]:
     steps: list[dict[str, str]] = []
     errors: list[Finding] = []
@@ -91,7 +92,7 @@ def run_start(
                 raise
             root = target or Path.cwd().resolve()
             adopt = any(not entry.name.startswith(".") for entry in root.iterdir()) if root.is_dir() else False
-            run_init(str(root), title=title or root.name, agent=agent, adopt=adopt)
+            run_init(str(root), title=title or root.name, agent=agent, adopt=adopt, strict=strict)
             project = Project.open(root)
             step("project", "done", f"created {project.root}" + (" (adopted the existing files)" if adopt else ""))
     except PaperchainError as exc:
@@ -100,6 +101,10 @@ def run_start(
 
     def refresh() -> Project:
         return Project.open(project.root)
+
+    if strict and not project.manifest.require_quotes:
+        project.manifest.require_quotes = True
+        project.save()
 
     # 2. sort loose files --------------------------------------------------------
     ambiguous = False

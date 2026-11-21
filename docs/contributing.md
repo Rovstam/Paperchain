@@ -26,7 +26,7 @@ src/paperchain/
 ├── convert.py      writes derived text to the OS cache
 ├── import_cmd.py   original manuscript -> Paper/paper.md
 ├── locations.py    OS cache location (AppData / XDG / macOS)
-├── library.py      CSL JSON bibliography loading
+├── library.py      CSL JSON and BibTeX bibliography loading
 ├── locking.py      hashes and read-only bits
 ├── build.py        pandoc, optional citeproc
 ├── init_cmd.py     template and adapter copying

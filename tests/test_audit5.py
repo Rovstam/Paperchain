@@ -138,11 +138,13 @@ def test_a_duplicate_id_used_by_a_source_is_an_error(tmp_path: Path) -> None:
         [
             {"id": "study2024", "title": "A Study"},
             {"id": "study2024", "title": "A Different Work"},
+            {"id": "study2024", "title": "A Third Work"},
         ],
     )
     report = run_check(Project.open(project.root))
     error = next(f for f in report.errors if f.code == "bibliography_duplicate_id")
     assert error.data["key"] == "study2024"
+    assert "source_metadata_mismatch" not in codes(report)
 
 
 def test_an_unused_duplicate_id_stays_a_warning(tmp_path: Path) -> None:

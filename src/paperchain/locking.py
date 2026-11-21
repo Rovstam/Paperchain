@@ -6,7 +6,7 @@ import stat
 
 from .errors import PaperchainError
 from .extract import Extraction, extract, render_text_file
-from .library import bibtex_conversion_hint, style_sha256
+from .library import style_sha256
 from .project import Project
 from .reference_log import append_event, reference_fingerprint
 from .util import now_iso, sha256_file
@@ -107,11 +107,6 @@ def run_lock(project: Project, accept_changes: bool = False) -> dict:
         bibliography = project.bibliography_path
         if bibliography is None or not bibliography.is_file():
             problems.append("the style is set but the Zotero export is missing")
-        elif bibliography.suffix.lower() in {".bib", ".bibtex"}:
-            problems.append(
-                "the style is set but the bibliography is BibTeX; "
-                + bibtex_conversion_hint(bibliography)
-            )
         csl = project.csl_path
         if csl is None or not csl.is_file():
             problems.append(f"the style is set but {manifest.csl or 'the CSL file'} is missing")
@@ -119,7 +114,7 @@ def run_lock(project: Project, accept_changes: bool = False) -> dict:
     if problems:
         style_missing = any(problem.startswith("the style is set but") for problem in problems)
         hint = (
-            "restore the style files named in the message: export CSL JSON to References/library.json and download the NLM/Vancouver CSL named by [build] csl"
+            "restore the bibliography and CSL files named in the message"
             if style_missing
             else "run `paperchain convert` first, and restore any missing originals"
         )
@@ -158,7 +153,7 @@ def run_lock(project: Project, accept_changes: bool = False) -> dict:
         source.text_sha256 = text_hashes[source.key]
         source.pages = page_counts[source.key]
 
-    # The CSL JSON and the style are hashed, not made read-only: Zotero must be
+    # The bibliography and the style are hashed, not made read-only: Zotero must be
     # able to overwrite the export, and a re-export is then reported by check.
     # Without a configured style they are not part of the lock, so existing
     # projects keep their previous behaviour.

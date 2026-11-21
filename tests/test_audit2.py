@@ -334,6 +334,19 @@ def test_non_numeric_manifest_size_is_invalid(tmp_path: Path) -> None:
     assert error.value.code == "manifest_invalid"
 
 
+def test_non_boolean_manifest_strict_setting_is_invalid(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    path = project.root / "paper.toml"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + '\n[check]\nrequire_quotes = "false"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(PaperchainError) as error:
+        Project.open(project.root)
+    assert error.value.code == "manifest_invalid"
+
+
 def test_lock_drift_includes_the_txt_copy(tmp_path: Path) -> None:
     project = _project_with_page(tmp_path)
     write_paper(project, '# T\n\nA claim [@study2024, p. 1: "Alpha text one."].\n')
