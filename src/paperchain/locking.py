@@ -8,6 +8,7 @@ from .errors import PaperchainError
 from .extract import Extraction, extract, render_text_file
 from .library import bibtex_conversion_hint, style_sha256
 from .project import Project
+from .reference_log import append_event, reference_fingerprint
 from .util import now_iso, sha256_file
 
 
@@ -125,17 +126,17 @@ def run_lock(project: Project, accept_changes: bool = False) -> dict:
         raise PaperchainError("lock_failed", "; ".join(problems), hint=hint)
 
     changes: list[str] = []
+    # The Zotero export is hashed whenever it exists, with or without a style:
+    # citeproc reads titles, authors and years from it.
+    bibliography = project.bibliography_path
+    bibliography_hash = sha256_file(bibliography) if bibliography and bibliography.is_file() else ""
+    if manifest.bibliography_sha256 and manifest.bibliography_sha256 != bibliography_hash:
+        changes.append("bibliography: the Zotero export changed")
     if manifest.style:
-        bibliography = project.bibliography_path
-        bibliography_hash = sha256_file(bibliography) if bibliography and bibliography.is_file() else ""
-        csl = project.csl_path
-        csl_hash = style_sha256(csl)
-        if manifest.bibliography_sha256 and manifest.bibliography_sha256 != bibliography_hash:
-            changes.append("bibliography: the Zotero export changed")
+        csl_hash = style_sha256(project.csl_path)
         if manifest.csl_sha256 and manifest.csl_sha256 != csl_hash:
             changes.append("csl: the style file or accepted-csl-ids.txt changed")
     else:
-        bibliography_hash = ""
         csl_hash = ""
     for source in manifest.sources:
         if source.sha256 and source.sha256 != source_hashes[source.key]:
@@ -170,6 +171,13 @@ def run_lock(project: Project, accept_changes: bool = False) -> dict:
 
     manifest.locked_at = now_iso()
     project.save()
+    append_event(
+        project,
+        "accept_changes" if changes else "lock",
+        source="lock",
+        changes=changes,
+        fingerprint=reference_fingerprint(manifest),
+    )
 
     return {
         "locked_at": manifest.locked_at,
@@ -182,7 +190,7 @@ def run_lock(project: Project, accept_changes: bool = False) -> dict:
     }
 
 
-def run_unlock(project: Project) -> dict:
+def run_unlock(project: Project, additive: bool = False) -> dict:
     manifest = project.manifest
     changed = 0
     for path in _locked_files(project):
@@ -191,6 +199,7 @@ def run_unlock(project: Project) -> dict:
             changed += 1
     manifest.locked_at = ""
     project.save()
+    append_event(project, "unlock", fingerprint=reference_fingerprint(manifest), additive=additive)
     return {
         "data": {
             "files": changed,

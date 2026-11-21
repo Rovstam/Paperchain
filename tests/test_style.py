@@ -242,7 +242,7 @@ def test_project_without_a_style_is_unchanged(tmp_path: Path) -> None:
     assert "styles" not in {path.name for path in project.root.iterdir()}
 
 
-def test_no_style_project_does_not_hash_the_zotero_export(tmp_path: Path) -> None:
+def test_no_style_project_hashes_the_zotero_export(tmp_path: Path) -> None:
     project = make_project(tmp_path)
     add_pdf(project, "study2024.pdf", ["Alpha text one."])
     run_convert(project)
@@ -251,10 +251,10 @@ def test_no_style_project_does_not_hash_the_zotero_export(tmp_path: Path) -> Non
     library = project.references_dir / "library.json"
     library.write_text(json.dumps(LIBRARY), encoding="utf-8")
     run_lock(Project.open(project.root))
-    assert Project.open(project.root).manifest.bibliography_sha256 == ""
+    assert Project.open(project.root).manifest.bibliography_sha256
     library.write_text(json.dumps(LIBRARY + [{"id": "other", "type": "book", "title": "Y"}]), encoding="utf-8")
     report = run_check(Project.open(project.root))
-    assert "bibliography_hash_mismatch" not in {finding.code for finding in report.errors}
+    assert "bibliography_hash_mismatch" in {finding.code for finding in report.errors}
 
 
 def test_style_error_is_reported_before_pandoc_missing(tmp_path: Path, monkeypatch) -> None:

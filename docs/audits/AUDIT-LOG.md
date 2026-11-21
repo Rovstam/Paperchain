@@ -4,6 +4,28 @@ This file tracks every audit finding and every bug found while verifying, with i
 
 Statuses: `fixed` (code and test), `fixed (live)` (code, test and verified on a real project), `open`, `data` (a problem in the user's data, not in Paperchain), `limitation` (known behaviour, documented rather than fixed).
 
+## Round 8 — 2026-11-15 (trial sample run)
+
+| ID | Finding | Status | Change | Evidence |
+|---|---|---|---|---|
+| A8-1 | With two possible manuscripts, `start` reported "nothing was moved" but still created the project, converted every existing `References/` file and locked them; the references step ran after `organize` stopped for the human. | fixed | `start.py`: returns before the references step while the manuscript is ambiguous | `tests/test_start.py::test_an_ambiguous_manuscript_does_not_touch_existing_references` |
+| A8-2 | After `start --manuscript "my manuscript.docx"`, a second loose DOCX was ingested as a source at `References/second-draft/`, so a duplicate draft became citable evidence. | fixed | `organize.py`: a root DOCX beside a DOCX manuscript is archived in `Dump/` | `tests/test_organize.py::test_a_second_docx_draft_is_dumped_instead_of_cited` |
+
+Observation: the metadata warning suggests `year = 2024` for a synthetic PDF with no year, which reads like inventing a date. The hint should name the field without proposing a value; not changed in this round.
+
+## Round 7 — 2026-11-15 (step-1 tamper test)
+
+| ID | Finding | Status | Change | Evidence |
+|---|---|---|---|---|
+| A7-1 | After `lock`, an edit to `References/library.json` (author, year) passed `check` and `build` in a project with no `[build] style`, because the export was only hashed when a style was set. | fixed | `locking.py` and `check.py` hash and verify the export in every project; `manifest.py` persists the hash without a style. Supersedes the "documented behaviour" note in A4-9. | `tests/test_audit7.py`, `tests/test_style.py::test_no_style_project_hashes_the_zotero_export` |
+| A7-2 | An agent that can run `unlock`, `convert --accept-changes` and `lock --accept-changes` can swap a reference PDF and `check` reports ok. | limitation (visible, not blocked) | By design these stay fully automatic. New `reference_log.py`: every `unlock` / accepted change is appended to `.paperchain/lock-log.jsonl`; `check` and `build` report `reference_fingerprint` and warn `reference_set_reblessed` / `reference_fingerprint_changed`; the OpenCode adapter denies edits to `.paperchain/**`. A writer with shell access can still edit the log, and a successful `build` counts as the acknowledgement. | `tests/test_reference_log.py` |
+
+## Round 6 — 2026-11-15 (Rewrite Blueprint)
+
+| ID | Finding | Status | Change | Evidence |
+|---|---|---|---|---|
+| A6-1 | Over-engineered 6-step CLI and context-window exhaustion from reading full PDF text. Proposed rewrite blueprint for automated ingestion, title-based folderization, Zotero guardrails, local context cards (`References/<Title>/context.md`), and local project cache. | superseded | The blueprint was not built as written and was moved to `Dump/`. Delivered incrementally instead: title folders (`folders.py`), context cards (`context.py`), `paperchain start`. Not delivered: an ingestion-time alert for sources with no Zotero record (D4; citing one is already blocked by `check` when an export exists), the project-local cache and the CLI consolidation. | `Dump/AUDIT-REWRITE-BLUEPRINT.md` (top banner lists each outcome) |
+
 ## Round 5 — 2026-11-14
 
 | ID | Finding | Status | Change | Evidence |

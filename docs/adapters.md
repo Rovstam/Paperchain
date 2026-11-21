@@ -31,12 +31,26 @@ target = ".opencode/agents/writer.md"
 
 `paperchain init --agent <name>` copies each `source` to its `target`, creating folders. Text files are rendered with `{{program}}`, `{{title}}`, `{{slug}}` and `{{date}}`, so a rename of the command does not leave stale instructions. Do not put secrets in an adapter.
 
+## Universal files
+
+Every project gets the same markdown files, and each tool picks up the one it knows:
+
+| File | Read by | Content |
+| --- | --- | --- |
+| `AGENTS.md` | OpenCode, Codex, and other tools that read it | the rules, the workflow and the safety limits; the single source of truth, with no tool-specific wording |
+| `CLAUDE.md` | Claude Code | `@AGENTS.md` and a one-line fallback; no rules of its own |
+| `GEMINI.md` | Gemini CLI | the same pointer |
+| `.github/copilot-instructions.md` | GitHub Copilot | the essential rules, pointing at `AGENTS.md` |
+
+A new rule goes into `AGENTS.md` only. The pointer files are tested to stay short and to import it, and `tests/test_universal_files.py` checks that every command the instruction files name exists in the CLI. Whether a given tool or version loads these files, and follows the `@` import, depends on that tool; none of them has been run against a real session yet. An existing `CLAUDE.md` or `GEMINI.md` is never overwritten by `init --adopt`.
+
 ## Status
 
 | Tool | Status | Notes |
 | --- | --- | --- |
 | OpenCode V2 | config verified, checklist pending | `permissions` array with `shell`, `edit`, `subagent`; `default_agent: writer`; two agents |
-| Claude Code | not shipped | Needs `CLAUDE.md` containing `@AGENTS.md`, plus `.claude/settings.json` |
+| Claude Code | instructions shipped (`CLAUDE.md`); no permission settings | Needs `.claude/settings.json` for the same deny/allow shape |
+| Gemini CLI | instructions shipped (`GEMINI.md`); no permission settings | Same pointer as Claude Code |
 | Codex | not shipped | Reads `AGENTS.md`; needs its own sandbox and approval configuration |
 
 "Config verified" means the tool loaded the file and registered both agents with the expected merged permissions. It does not mean the enforcement checklist below has been run. Only mark `tested = true` after running it.
@@ -70,7 +84,7 @@ Rules are evaluated in order and the last match wins. This is an allowlist of su
 
 `--force` is denied after the allow, so `paperchain build --force` stops. The CLI also disables argparse abbreviations (`allow_abbrev=False`), so `--fo` is a usage error rather than a synonym for `--force`.
 
-The writer may therefore run only `doctor`, `check` and `build`. Converting, matching, locking and unlocking are human steps, and treating them as a boundary is deliberate: `match --apply` writes `paper.toml`.
+The writer may therefore run `start`, `context`, `doctor`, `check` and `build`. Converting, matching, locking and unlocking by hand are human steps, and treating them as a boundary is deliberate: `match --apply` writes `paper.toml`. `start` is allowed because it only adds: it runs those steps itself for new references, but it never passes `--accept-changes`, so it cannot bless a changed reference, and it stops and asks when one differs. `References/**/*.context.md` is writable (the allow follows the `References/**` deny) so the writer can fill in the scoped resume, and `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `.github/copilot-instructions.md` are not.
 
 The `writer` agent also denies `webfetch` and `websearch`, so it cannot quietly pull facts from outside the reference set. The `scout` subagent is the opposite: it may search, and it can only write to `Candidates/`.
 
@@ -78,13 +92,7 @@ The agent definitions live in Markdown with YAML frontmatter, which OpenCode mer
 
 ## Adding Claude Code
 
-Claude Code does not read `AGENTS.md` directly. The usual bridge is a `CLAUDE.md` at the project root containing:
-
-```markdown
-@AGENTS.md
-```
-
-Then add a settings file for the same deny/allow shape. The settings schema changes between releases, so write it against the version you run, test it, and only then set `tested = true` in `adapter.toml`.
+Claude Code does not read `AGENTS.md` directly. The bridge, a `CLAUDE.md` at the project root whose first line is `@AGENTS.md`, now ships with every project. What is still missing is a settings file for the same deny/allow shape. The settings schema changes between releases, so write it against the version you run, test it, and only then set `tested = true` in `adapter.toml`.
 
 ## Adding Codex
 

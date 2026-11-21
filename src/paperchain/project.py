@@ -383,6 +383,8 @@ class Project:
                 continue
             if path.name.casefold() in REFERENCE_SKIP_NAMES:
                 continue
+            if path.name.casefold().endswith(".context.md"):
+                continue
             if path.suffix.lower() in REFERENCE_METADATA_SUFFIXES:
                 continue
             found.append(path)

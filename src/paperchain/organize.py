@@ -372,6 +372,16 @@ def build_plan(
 
         if entry.is_file():
             if (
+                manuscript_path is not None
+                and manuscript_path.suffix.casefold() == ".docx"
+                and entry.suffix.casefold() == ".docx"
+            ):
+                # A second DOCX beside a DOCX manuscript is another draft,
+                # not a citable source. Archive it; do not turn it into a
+                # reference that the writer could cite as evidence.
+                _plan_dump(plan, root, entry, manuscript_path)
+                continue
+            if (
                 entry.suffix.casefold() in REFERENCE_SUFFIXES
                 and (category or not _looks_like_guide(entry.name))
             ):

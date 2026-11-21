@@ -14,6 +14,12 @@ from .citations import (
     parse_citations,
     scan_markdown,
 )
+from .reference_log import (
+    LOG_RELATIVE,
+    read_events,
+    reblessed_since_last_build,
+    reference_fingerprint,
+)
 from .errors import Finding, PaperchainError
 from .extract import SUPPORTED_SUFFIXES, Extraction, extract, render_text_file
 from .library import (
@@ -350,11 +356,10 @@ def _check_bibliography_and_style(project: Project, report: Report, bibliography
     """
     manifest = project.manifest
     style = manifest.style
-    if not style:
-        # Projects without a configured style keep the old behaviour: a Zotero
-        # export is optional and is not part of the lock.
-        return
 
+    # The export is hashed whether or not a style is set: citeproc takes titles,
+    # authors and years from it whenever it exists, so an unnoticed edit would
+    # change the built bibliography.
     if manifest.bibliography_sha256:
         if bibliography is None or not bibliography.is_file():
             report.errors.append(
@@ -383,6 +388,10 @@ def _check_bibliography_and_style(project: Project, report: Report, bibliography
                 hint="run `paperchain lock --accept-changes` so a later re-export is detected",
             )
         )
+
+    if not style:
+        # Without a style there is no CSL to verify.
+        return
 
     csl = project.csl_path
     if manifest.csl_sha256 and csl is not None and csl.is_file() and style_sha256(csl) != manifest.csl_sha256:
@@ -1150,9 +1159,23 @@ def run_check(
             )
 
     report.stats = stats
+    fingerprint = reference_fingerprint(manifest)
     report.data = {
         "project": str(project.root),
         "title": manifest.title,
         "locked_at": manifest.locked_at,
+        "reference_fingerprint": fingerprint,
     }
+    reblessed = reblessed_since_last_build(read_events(project))
+    if reblessed:
+        report.warnings.append(
+            Finding(
+                "reference_set_reblessed",
+                f"the reference set was unlocked or re-blessed {len(reblessed)} time(s) since the last build",
+                severity="warning",
+                file=LOG_RELATIVE,
+                hint="tell the human which references changed; the log lists each event. Review with `git diff paper.toml`",
+                data={"events": reblessed[-5:], "fingerprint": fingerprint},
+            )
+        )
     return report

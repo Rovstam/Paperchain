@@ -21,6 +21,13 @@ from .errors import Finding, PaperchainError
 from .library import bibliography_keys
 from .manifest import Source
 from .project import Project
+from .reference_log import (
+    append_event,
+    last_build_fingerprint,
+    read_events,
+    reference_fingerprint,
+    short,
+)
 from .util import human_bytes, is_link
 
 BUILD_FILENAME = ".paperchain.build.md"
@@ -490,6 +497,19 @@ def run_build(project: Project, force: bool = False) -> BuildResult:
             )
 
     result.output = output
+    fingerprint = reference_fingerprint(project.manifest)
+    previous = last_build_fingerprint(read_events(project))
+    if previous and fingerprint and previous != fingerprint:
+        report.warnings.append(
+            Finding(
+                "reference_fingerprint_changed",
+                f"the reference set differs from the last build ({short(previous)} -> {short(fingerprint)})",
+                severity="warning",
+                hint="expected after you add or replace references; otherwise ask the human to review `.paperchain/lock-log.jsonl`",
+                data={"previous": previous, "current": fingerprint},
+            )
+        )
+    append_event(project, "build", fingerprint=fingerprint, forced=bool(report.errors))
     return result
 
 
@@ -590,4 +610,5 @@ def describe_output(result: BuildResult, project: Project) -> dict:
         "size": human_bytes(result.output.stat().st_size),
         "pandoc": result.pandoc_version,
         "warnings": len(result.report.warnings),
+        "reference_fingerprint": reference_fingerprint(project.manifest),
     }

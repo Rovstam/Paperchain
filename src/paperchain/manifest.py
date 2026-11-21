@@ -212,6 +212,8 @@ class Manifest:
             or self.bibliography
             or self.csl
             or self.style
+            or self.bibliography_sha256
+            or self.csl_sha256
         ):
             lines += ["", "[build]"]
             if self.build_output:

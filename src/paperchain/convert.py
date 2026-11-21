@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 
+from .context import write_cards
 from .errors import Finding, PaperchainError
+from .folders import folder_name, free_folder, library_title, usable_title
 from .extract import (
+    peek_title,
     SUPPORTED_SUFFIXES,
     build_payload,
     dump_payload,
@@ -13,6 +17,7 @@ from .extract import (
 )
 from .manifest import Source
 from .project import Project, category_name
+from .reference_log import append_event
 from .util import now_iso, rel_posix, sha256_file, shorten_key, sha256_text
 
 # File metadata often names the person who installed the software, not the
@@ -63,6 +68,27 @@ def _scan_references(project: Project) -> list[Path]:
     return files
 
 
+def _same_file_in_title_folder(references: Path, name: str, path: Path) -> Path | None:
+    """An identical file already filed under `name` or `name (2)`, ..., if any."""
+    try:
+        digest = sha256_file(path)
+    except OSError:
+        return None
+    for folder in references.iterdir() if references.is_dir() else []:
+        base = folder.name.casefold()
+        if not folder.is_dir() or not (
+            base == name.casefold() or re.fullmatch(re.escape(name.casefold()) + r" \(\d+\)", base)
+        ):
+            continue
+        for existing in folder.iterdir():
+            try:
+                if existing.is_file() and sha256_file(existing) == digest:
+                    return existing
+            except OSError:
+                continue
+    return None
+
+
 def organize_loose_references(
     project: Project, into: str | None = None
 ) -> tuple[list[str], list[Finding]]:
@@ -87,10 +113,31 @@ def organize_loose_references(
         if path.suffix.lower() not in {".pdf", ".docx"}:
             continue
         key = project.reference_key(path)
-        target_dir = (
-            project.references_dir / category if category else project.references_dir / key
-        )
-        target = target_dir / path.name
+        if category:
+            target_dir = project.references_dir / category
+            target = target_dir / path.name
+        else:
+            title_name = folder_name(
+                library_title(project.bibliography_path, usable_title(peek_title(path)))
+            )
+            if title_name:
+                duplicate = _same_file_in_title_folder(project.references_dir, title_name, path)
+                if duplicate is not None:
+                    warnings.append(
+                        Finding(
+                            "organize_skipped",
+                            f"{path.name} was not moved because {project.relative(duplicate)} has the same content",
+                            severity="warning",
+                            file=project.relative(path),
+                            hint="the copy already in its folder is kept; move this loose file out of References/ yourself",
+                        )
+                    )
+                    continue
+                target_dir = free_folder(project.references_dir, title_name)
+                target = target_dir / f"{target_dir.name}{path.suffix}"
+            else:
+                target_dir = project.references_dir / key
+                target = target_dir / path.name
         if target.exists():
             warnings.append(
                 Finding(
@@ -242,6 +289,9 @@ def run_convert(
             hint="inspect the files, then re-run `paperchain convert --accept-changes` to bless them",
         )
 
+    if changes and accept_changes:
+        append_event(project, "accept_changes", source="convert", changes=changes)
+
     converted: list[str] = []
     skipped: list[str] = []
     project.text_dir.mkdir(parents=True, exist_ok=True)
@@ -339,6 +389,8 @@ def run_convert(
 
     project.save()
     _write_index(project)
+    card_result = write_cards(project)
+    warnings.extend(card_result["warnings"])
 
     return {
         "converted": converted,
@@ -353,6 +405,7 @@ def run_convert(
             "into": category_name(into) if into else "",
             "cache": str(project.cache_dir),
             "index": str(project.text_dir / "INDEX.md"),
+            "cards_pending": card_result["pending"],
         },
     }
 

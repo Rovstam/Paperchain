@@ -22,26 +22,36 @@ You may summarise, compare and connect sources. You may not add outside knowledg
 | --- | --- | --- |
 | cache text (see `doctor --json` `data.cache.text`) | yes | never |
 | `References/**` (PDFs, DOCX, Zotero JSON) | yes | never |
+| `References/**/<name>.context.md` (context cards) | yes | only below the marker line, see Context cards |
 | `Manuscript/` (the original) | yes | never |
 | `Paper/paper.md` | yes | yes |
 | `Candidates/` | yes | yes |
 | `Output/` | yes | never |
 | `paper.toml` | yes | never |
+| `.paperchain/` (the lock log) | yes | never |
 | `AGENTS.md` | yes | never |
 
-`References/` is hashed and read-only. If a check reports a hash mismatch, stop and tell the human. Do not try to repair it, and never run `{{program}} unlock` or `{{program}} import`.
+`References/` is hashed and read-only, except the context cards. If a check reports a hash mismatch, stop and tell the human. Do not try to repair it, and never run `{{program}} unlock` or `{{program}} import`.
 
 ## Workflow
 
-1. Run `{{program}} doctor --json`. If it is not `ok`, stop and report the finding.
+1. Run `{{program}} start --json`. It sorts the files, imports the manuscript, converts and locks the references, writes the context cards and runs the diagnostics; running it again is safe. If `data.needs_human` is not empty, stop and ask the human (it names the question); when the human names the manuscript, rerun with `--manuscript "<file>"`. Never accept changed references yourself.
 2. If `Paper/paper.md` is still the template, ask the human to run `{{program}} import` on the original manuscript.
-3. Read the `data.cache.index` file reported by `doctor --json`, then the source files you need in `data.cache.text`.
+3. Read the context card of each source you need (`data.cards[].card` from `start`, or `{{program}} context --json`). Read the full text in `data.cache.text` only for the pages a card points you to. Write the scoped resume for every key in `data.pending_cards`.
 4. Draft in `Paper/paper.md` using the citation syntax below.
 5. Run `{{program}} check --json`. Fix every error. Warnings are yours to judge.
 6. Run `{{program}} build`. The document appears in `Output/`.
-7. Report what you changed and which citations you added.
+7. Report what you changed and which citations you added. Also report `data.reference_fingerprint` from `check --json` or `build`, and say so plainly if `check` or `build` warns `reference_set_reblessed` or `reference_fingerprint_changed`: the human decides whether that change was intended.
 
 If the same error survives three attempts, stop and ask the human.
+
+## Context cards
+
+Every converted reference has a card beside it, `<name>.context.md`. The part above the marker line is generated (title, sections found, a one-line preview per page) and is rewritten when the reference changes. Never edit it.
+
+`{{program}} context --json` lists `data.pending`: sources whose card has no scoped resume yet, or whose resume is marked `> STALE`. For each one, read its cached text once, then replace the `PENDING` line under `## Scoped resume` with a short resume written for this paper's topic: what the source is and why it matters here, its key findings with the page of each, and candidate quotes copied exactly with their page, plus any limits or caveats. If the card is stale, rewrite the resume and delete the stale line. Write only below the marker line.
+
+A card is a set of leads, never evidence. Before you cite from it, open the cited page in the cached text and copy the quote exactly; `check` is the judge, not the card. Do not cite anything that appears only in a card.
 
 ## Citation syntax
 
@@ -90,7 +100,7 @@ A candidate is not a source. You cannot cite it.
 
 ## Tools
 
-Allowed: `{{program}} doctor`, `{{program}} check`, `{{program}} build`, `git status`, `git diff`.
+Allowed: `{{program}} start`, `{{program}} doctor`, `{{program}} check`, `{{program}} build`, `{{program}} context`, `git status`, `git diff`.
 
 Not allowed: `{{program}} import`, `{{program}} convert`, `{{program}} lock`, `{{program}} unlock`, `{{program}} init`, any `--force` flag, editing any `.docx`, deleting files, installing packages, or changing `paper.toml`.
 

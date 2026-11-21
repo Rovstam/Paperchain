@@ -1,5 +1,76 @@
 # Changelog
 
+## Unreleased - trial-sample start fixes
+
+### Fixed
+
+- `paperchain start` now stops when the manuscript is ambiguous. It previously said "nothing was moved" and then converted and locked every file already in `References/`, so the promise was false.
+- When the manuscript is a DOCX, a second DOCX at the top level is moved to `Dump/` instead of being ingested as a reference source, where the writer could cite a duplicate draft.
+- `tests/test_start.py` and `tests/test_organize.py` cover both cases.
+
+## Unreleased - universal instruction files
+
+### Added
+
+- `init` now also writes `CLAUDE.md` and `GEMINI.md`, each a few lines that import `AGENTS.md` (`@AGENTS.md`) and say to read it if the import did not load. `AGENTS.md` stays the single source of truth and is free of tool-specific wording; `.github/copilot-instructions.md` keeps the essentials and points at it. An existing `CLAUDE.md` or `GEMINI.md` is never overwritten.
+- The OpenCode adapter denies edits to `CLAUDE.md`, `GEMINI.md` and `.github/copilot-instructions.md`, like `AGENTS.md`.
+- `tests/test_universal_files.py`: the pointers import `AGENTS.md` and stay short, `AGENTS.md` names no tool, and every `paperchain <command>` named in the instruction files exists in the CLI.
+- `docs/AGENTS.md` (the repository rules) leads with `paperchain start`; the superseded rewrite blueprint moved to `Dump/`.
+
+## Unreleased - `paperchain start`
+
+### Added
+
+- `paperchain start [DIR] [--title T] [--manuscript FILE] [--agent NAME]`: creates (adopting existing files) or opens the project, runs `organize --apply`, `import`, `convert`, `match --apply` (when a Zotero export exists), `lock`, `context` and `doctor` in order, and prints `data.steps`, `data.needs_human`, `data.pending_cards`, `data.cards`, `data.reference_fingerprint` and `data.next`. Every step is skipped when there is nothing to do, so running it again changes nothing.
+- It only adds. It never passes `--accept-changes`, never replaces a drafted `Paper/paper.md`, and stops (`start_reference_changed`) when a locked reference or the locked Zotero export differs from its hash, leaving the project locked and untouched. Several possible manuscripts give one `start_manuscript_ambiguous` question and move nothing; `--manuscript FILE` answers it. A Zotero export added to an already locked project, or new references, are handled by an in-process unlock, convert, match, lock, with the unlock logged as `additive` so it does not raise `reference_set_reblessed`.
+- The OpenCode adapter allows `paperchain start`. `AGENTS.md`, the Copilot instructions and `help` lead with it. New module `start.py`; tests in `tests/test_start.py`.
+
+## Unreleased - context cards
+
+### Added
+
+- `paperchain context [--only KEY ...]`, also run at the end of `convert`: writes `<name>.context.md` beside each converted reference (for example `References/Assessment/Assessment.context.md`). The generated top holds the key, title, authors, page count and hash, the standard section headings found with their page (English and Spanish), and a one-line preview and word count for every page (one page in every N when there are more than 120). It is rebuilt from the cached text and is idempotent (no timestamps).
+- Everything below the marker line is the writer's `## Scoped resume` and survives regeneration. A new card carries a `PENDING` line; `context --json` returns `data.pending` for cards with no resume or a `> STALE` one. When the reference file changes after a resume was written, the card gains one stale notice instead of losing the resume. A card that exists without the marker is never overwritten (`context_card_unrecognised`).
+- Cards are not sources (excluded from `iter_reference_files`), not hashed and not part of the lock, so writing one never breaks `check`. A card is a lead only; `AGENTS.md` and the Copilot instructions tell the writer to re-read the cited page and copy the quote exactly.
+- OpenCode adapter: `References/**/*.context.md` is writable (the allow rule follows the `References/**` deny) and `paperchain context` is an allowed shell command. `AGENTS.md`, `.github/copilot-instructions.md` and `help` describe the card workflow. New module `context.py`; tests in `tests/test_context.py`.
+
+### Changed
+
+- `MAX_FOLDER_CHARS` is 10 (was 50). Titles that begin alike now collide more often and are numbered `Effects`, `Effects (2)`, ...
+
+## Unreleased - title-based reference folders
+
+### Changed
+
+- `paperchain convert` files a loose PDF/DOCX from the `References/` root into `References/<Title>/<Title>.<ext>`, named after the paper's title instead of its filename. The title is read from the PDF/DOCX metadata (`extract.peek_title`), or taken from `References/library.json` when exactly one entry matches it. Names lose characters that Windows, macOS or Linux reject (`: ` becomes ` - `), are cut at a word boundary within `MAX_FOLDER_CHARS` (10) characters without a trailing "of"/"and"/"the" (a first word longer than that is kept whole, up to `MAX_WORD_CHARS` = 25, never cut mid-word), and never come out empty, hidden or reserved (`CON`, `NUL`, ...). The source key follows the folder (`slugify(<Title>)`), which is the existing "organized form".
+- Two different papers with the same title get `<Title>` and `<Title> (2)`; names that differ only by case count as the same. An identical file that is already filed is reported as `organize_skipped` and left where it was. A file with no usable title (generic, file-like or missing metadata) keeps the old `References/<key>/<file>` behaviour, and `--into CATEGORY` is unchanged. Files already inside a folder are never moved or renamed.
+- New module `folders.py`; tests in `tests/test_folders.py`. Existing sources keep their keys (the manifest path-to-key mapping is unchanged).
+
+## Unreleased - step-1 tamper test (Gap 1: visibility)
+
+### Added
+
+- `.paperchain/lock-log.jsonl`: `lock`, `unlock`, `lock --accept-changes`, `convert --accept-changes` and a successful `build` each append one JSON line. Nothing prompts and nothing is refused.
+- `check --json` reports `data.reference_fingerprint`, one hash over every recorded reference, cached text, bibliography and style hash. `build` reports it too.
+- New warnings: `reference_set_reblessed` (an unlock or accepted change since the last successful build) and `reference_fingerprint_changed` (`build`: the set differs from the previous build). Adding a new reference is not a re-bless.
+- The OpenCode adapter denies edits to `.paperchain/**`; `AGENTS.md` tells the writer to report the fingerprint and either warning to the human.
+
+### Limits
+
+- The log is a signal, not a lock. Anyone who can write the project can edit it, and a successful `build` clears `reference_set_reblessed` (the build report carries the warning that time). New module: `reference_log.py`; tests: `tests/test_reference_log.py`.
+
+## Unreleased - step-1 tamper test (Gap 2)
+
+### Fixed
+
+- `References/library.json` (or the configured bibliography) is now hashed by `lock` and verified by `check` in every project, not only when `[build] style` is set. Citeproc takes titles, authors and years from the export whenever it exists, so an edit after `lock` used to change the built bibliography with no error. An edited export is `bibliography_hash_mismatch`, a removed one is `bibliography_missing`, and one added after `lock` is `bibliography_not_locked`; `paperchain lock --accept-changes` re-blesses a deliberate Zotero re-export.
+- `manifest.py` writes `bibliography_sha256` even when no style, CSL or output is configured.
+
+### Behaviour change
+
+- Existing locked projects that already have a `library.json` and no style will see `bibliography_not_locked` once. Run `paperchain lock --accept-changes`. No new error codes and no `paper.toml` schema change.
+- `tests/test_style.py::test_no_style_project_does_not_hash_the_zotero_export` asserted the old behaviour; it is now `test_no_style_project_hashes_the_zotero_export` and asserts the opposite. New tests are in `tests/test_audit7.py`.
+
 ## Unreleased - fourth audit fixes
 
 ### Fixed

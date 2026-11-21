@@ -6,8 +6,8 @@ The repository that contains this file is the Paperchain source repository, not 
 
 - When the user asks how to start, install, initialize, or use Paperchain, run `paperchain help --json` if the command is available and relay `data.steps`. Otherwise answer from `README.md` and `docs/`. Do not search `Documents`, `Monograph`, `AppData` or unrelated project folders.
 - Treat the current working directory as the project unless the user names a path.
-- Empty folder: `paperchain init . --title "Project Name"`, put the manuscript in `Manuscript/`, put references under `References/`, then run `paperchain import`, `paperchain convert`, `paperchain lock`, `paperchain check`, `paperchain build`.
-- Folder with an existing manuscript and references: `paperchain init . --adopt --title "Project Name"`, then the same import/convert/lock/check/build sequence.
+- Any folder, empty or with an existing manuscript and references: run `paperchain start` (add `--title "Project Name"` for a new project, and `--manuscript FILE` when it asks which file is the manuscript). It creates or adopts the project, sorts files, imports the manuscript, converts and locks the references and writes the context cards; running it again is safe. Then `paperchain check` and `paperchain build`.
+- The step-by-step commands (`init`, `organize`, `import`, `convert`, `match`, `lock`) still exist for anyone who wants to run them one at a time.
 - Only inspect files or run commands when the user asks about their actual project, gives a path, or reports an error. "How do I start?" is a documentation question, not a filesystem investigation.
 
 ## Repository work

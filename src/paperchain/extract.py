@@ -137,6 +137,25 @@ def _extract_pdf(path: Path) -> Extraction:
     )
 
 
+def peek_title(path: Path) -> str:
+    """The title stored in a PDF or DOCX, read without extracting the text.
+
+    Returns an empty string for anything unreadable, encrypted or untitled; it
+    is only used to choose a folder name.
+    """
+    suffix = path.suffix.lower()
+    try:
+        if suffix == ".docx":
+            return _docx_metadata(path)[0]
+        if suffix == ".pdf":
+            import pypdf
+
+            return _pdf_metadata(pypdf.PdfReader(str(path)))[0]
+    except Exception:
+        return ""
+    return ""
+
+
 def _clean_metadata(value: object) -> str:
     text = str(value or "").strip()
     if not text or text.lower().endswith((".pdf", ".docx")):

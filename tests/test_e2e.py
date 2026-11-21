@@ -32,6 +32,8 @@ def test_init_creates_the_layout_and_adapter(tmp_path: Path) -> None:
     root = project.root
     for name in [
         "AGENTS.md",
+        "CLAUDE.md",
+        "GEMINI.md",
         "paper.toml",
         ".gitignore",
         ".gitattributes",

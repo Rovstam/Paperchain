@@ -146,7 +146,7 @@ Generated page text, extracted manuscript images and build temp files are **not*
 
 `Paper/media/` is kept as a folder link to the cache (a junction on Windows, a symlink elsewhere) so image paths in `paper.md` stay short. If the OS refuses to create the link, the images fall back to a normal folder inside `Paper/` and everything still works. OpenCode may ask once for permission to read the cache folder because it is outside the project. Allow that folder; it is generated text, not a source of truth.
 
-Reference types: PDF and DOCX are the intended formats. TXT and MD are still accepted because the existing converter supports them. Anything else is ignored with a warning. Loose PDF/DOCX files directly in `References/` are moved by `paperchain convert` into `References/<key>/<file>`; files already in subfolders are left alone. A file in `References/<folder>/name.pdf` gets the key `<folder>-name`, so two subfolders can both contain `review.pdf` without a collision. Projects from older versions that use `References/originals/` keep working.
+Reference types: PDF and DOCX are the intended formats. TXT and MD are still accepted because the existing converter supports them. Anything else is ignored with a warning. Loose PDF/DOCX files directly in `References/` are moved by `paperchain convert` into a folder named after the paper's title, for example `References/Assessment/Assessment.pdf` (the title comes from the file's metadata, or from the Zotero export when exactly one entry matches it; it is cleaned for every operating system and cut at a word boundary within 10 characters, or kept whole when its first word is longer, up to 25; a second paper with the same title becomes `... (2)`). A file with no usable title goes to `References/<key>/<file>` as before. Files already in subfolders are left alone, and an identical copy of a file that is already filed is reported (`organize_skipped`) and never deleted. A file in `References/<folder>/name.pdf` gets the key `<folder>-name`, so two subfolders can both contain `review.pdf` without a collision. Projects from older versions that use `References/originals/` keep working.
 
 ## Citation syntax
 
@@ -195,12 +195,16 @@ Citeproc output is static formatted text, not live Zotero fields; use the Zotero
 | `paperchain organize` | human | sort existing files into `Manuscript/`, `References/` and `Dump/`; plan first, `--apply` to move |
 | `paperchain import` | human | copy the original manuscript to `Paper/paper.md` without editing the original |
 | `paperchain convert` | human | extract page-marked text from references (recursively); the agent adapter denies it |
+| `paperchain start` | anyone | set the folder up in one go and safely repeatable: create or open the project, sort files, import the manuscript, file and convert references, pair with Zotero, lock, write context cards, run diagnostics. It only adds: it stops for a human when a locked reference changed or the manuscript is ambiguous (`--manuscript FILE` answers that) |
+| `paperchain context` | anyone | write or refresh a context card (`<name>.context.md`) beside each converted reference: sections found, a one-line preview of every page, and a `## Scoped resume` the agent fills in below the marker line. `convert` runs it too; `--json` lists `data.pending` |
 | `paperchain lock` | human | record hashes, refuse to bless changes without `--accept-changes`, make references read-only |
 | `paperchain match` | human | pair sources with Zotero/Better BibTeX entries by title; `--apply` writes `citation_key` |
 | `paperchain unlock` | human | make references writable again |
 | `paperchain check` | agent | verify hashes, keys, pages, quotes |
 | `paperchain build` | agent | check, then build `Output/*.docx` |
 | `paperchain doctor` | anyone | diagnose Python, pandoc, OCR, hashes, adapter |
+
+Context cards are navigation aids, not evidence: they sit outside the lock, only the part below the marker line is the writer's (the rest is rebuilt from the cached text), and the template `.gitignore` keeps them out of git with the other reference files. A claim is supported only when `check` finds its quoted words on the cited page.
 
 Every command prints human text by default and one JSON object with `--json`. Exit codes: `0` clean, `1` findings or a failed check, `2` the command could not run. Agents should read the JSON.
 
@@ -210,10 +214,11 @@ Every command prints human text by default and one JSON object with `--json`. Ex
 | --- | --- | --- |
 | OpenCode V2 | config verified on 2.2.6; permission checklist not run | `opencode.json`, `.opencode/agents/writer.md`, `.opencode/agents/scout.md` |
 | GitHub Copilot in VS Code | instructions shipped; no permission enforcement | `AGENTS.md`, `.github/copilot-instructions.md` |
-| Claude Code | not shipped | needs `CLAUDE.md` with `@AGENTS.md` and a settings file |
+| Claude Code | instructions shipped, no permission enforcement | `CLAUDE.md` (imports `AGENTS.md`); needs a settings file |
+| Gemini CLI | instructions shipped, no permission enforcement | `GEMINI.md` (imports `AGENTS.md`) |
 | Codex | not shipped | reads `AGENTS.md`; needs its own sandbox settings |
 
-The rules live in `AGENTS.md` for every tool. Permission files are adapters, because each tool invents its own format. The adapter is a guardrail, not the guarantee.
+The rules live in `AGENTS.md` for every tool; `CLAUDE.md`, `GEMINI.md` and the Copilot file only point at it, so there is one place to change a rule. Permission files are adapters, because each tool invents its own format. The adapter is a guardrail, not the guarantee.
 
 For VS Code, open the project folder itself and select the `Paper/paper.md` file. GitHub Copilot reads `.github/copilot-instructions.md` in recent versions. The integrated terminal must also find `paperchain`: either select Git Bash as the default terminal profile, or add the `Scripts` folder of the Python environment where paperchain is installed (for example `<project>\.venv\Scripts`) to the Windows user `PATH`. Copilot has no permission enforcement, so `paperchain check` remains the evidence.
 

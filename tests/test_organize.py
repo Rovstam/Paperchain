@@ -13,7 +13,7 @@ from paperchain.organize import build_plan, run_organize
 from paperchain.project import Project
 
 from .conftest import make_project
-from .helpers import write_pdf
+from .helpers import write_docx, write_pdf
 
 
 def _messy_project(tmp_path: Path) -> Project:
@@ -276,6 +276,20 @@ def test_explicit_manuscript_resolves_the_ambiguity(tmp_path: Path) -> None:
     assert not (project.root / "first.pdf").exists()
     assert (project.root / "References" / "second.pdf").is_file()
     assert Project.open(project.root).manifest.manuscript_path == "Manuscript/first.pdf"
+
+
+def test_a_second_docx_draft_is_dumped_instead_of_cited(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    root = project.root
+    write_docx(root / "draft.docx", ["Licorice review draft."])
+    write_docx(root / "old draft.docx", ["Licorice review, older draft."])
+
+    run_organize(project, apply=True, manuscript="draft.docx")
+
+    assert (root / "Manuscript" / "draft.docx").is_file()
+    assert (root / "Dump" / "old draft.docx").is_file()
+    assert not (root / "References" / "old draft.docx").exists()
+    assert Project.open(root).manifest.sources == []
 
 
 # -- explicit overrides ---------------------------------------------------

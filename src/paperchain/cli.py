@@ -17,6 +17,8 @@ from .help_cmd import help_data
 from .import_cmd import run_import
 from .init_cmd import run_init
 from .locking import run_lock, run_unlock
+from .context import write_cards
+from .start import run_start
 from .match_cmd import run_match
 from .organize import run_organize
 from .project import Project
@@ -185,6 +187,43 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
         if result["changes"]:
             summary += f" (accepted {len(result['changes'])} change(s))"
         return _envelope(command, True, summary, data=result["data"])
+
+    if command == "start":
+        result = run_start(
+            args.directory or getattr(args, "project", None),
+            title=args.title,
+            agent=args.agent,
+            manuscript=args.manuscript,
+        )
+        needs = result["data"]["needs_human"]
+        done = sum(1 for item in result["steps"] if item["status"] == "done")
+        if needs:
+            summary = f"setup paused: {len(needs)} thing(s) need a human"
+        elif result["errors"]:
+            summary = f"setup finished with {len(result['errors'])} error(s)"
+        else:
+            summary = f"ready: {done} step(s) done, {len(result['data']['pending_cards'])} context card(s) need a resume"
+        return _envelope(
+            command,
+            not result["errors"],
+            summary,
+            errors=result["errors"],
+            warnings=result["warnings"],
+            data=result["data"],
+        )
+
+    if command == "context":
+        project = _project(args)
+        result = write_cards(project, only=args.only)
+        counts = {name: sum(1 for c in result["cards"] if c["status"] == name) for name in ("created", "updated", "unchanged", "kept")}
+        summary = (
+            f"{len(result['cards'])} card(s): {counts['created']} new, {counts['updated']} updated, "
+            f"{counts['unchanged']} unchanged; {len(result['pending'])} need a scoped resume"
+        )
+        return _envelope(
+            command, True, summary, warnings=result["warnings"],
+            data={"cards": result["cards"], "pending": result["pending"]},
+        )
 
     if command == "match":
         project = _project(args)
@@ -449,6 +488,23 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="accept references that changed since the last lock",
     )
+    p_start = sub.add_parser(
+        "start",
+        parents=[common],
+        help="set up this folder for writing: sort, import, convert, lock, context cards",
+        description="Run the setup steps in order and print what is left. Safe to run again. It only adds: it never accepts changed references and never replaces a draft.",
+    )
+    p_start.add_argument("directory", nargs="?", help="the project or the folder to turn into one (default: here)")
+    p_start.add_argument("--title", help="title for a new project (default: the folder name)")
+    p_start.add_argument("--agent", default="opencode", help="agent adapter for a new project (default: opencode)")
+    p_start.add_argument("--manuscript", metavar="FILE", help="the original manuscript, when more than one file could be it")
+    p_context = sub.add_parser(
+        "context",
+        parents=[common],
+        help="write a context card next to each converted reference",
+        description="Write or refresh <name>.context.md beside every converted reference. The generated top is rebuilt from the cached text; the scoped resume below the marker is kept.",
+    )
+    p_context.add_argument("--only", nargs="+", metavar="KEY", help="only these source keys")
     sub.add_parser(
         "unlock",
         parents=[common],
@@ -570,6 +626,20 @@ def print_human(payload: dict[str, Any]) -> None:
             print(f"  ... and {len(moves) - 60} more")
         for candidate in data.get("candidates") or []:
             print(f"  candidate manuscript: {candidate}")
+    if payload["command"] == "start":
+        for item in data.get("steps", []):
+            mark = {"done": "ok  ", "skipped": "skip", "needs_human": "ASK ", "failed": "FAIL"}.get(item["status"], item["status"])
+            print(f"  {mark} {item['step']}: {item['detail']}")
+        for item in data.get("needs_human", []):
+            print(f"  needs a human: {item}")
+        if data.get("next"):
+            print("  next:")
+            for item in data["next"]:
+                print(f"    - {item}")
+    if payload["command"] == "context":
+        for card in data.get("cards", []):
+            state = "stale" if card.get("stale") else ("resume" if card.get("has_resume") else "pending")
+            print(f"  {card['status']:<9} {state:<8} {card['key']} -> {card['card']}")
     if payload["command"] == "match":
         for row in data.get("sources", []):
             candidates = row.get("candidates") or []

@@ -6,14 +6,14 @@ Read `AGENTS.md` first. It is the source of truth. This file only points Copilot
 
 - Edit `Paper/paper.md`.
 - Edit or create `Candidates/<key>.md` when a source is missing.
-- Never edit `References/`, `Manuscript/`, `Output/`, `paper.toml` or `AGENTS.md`.
+- Never edit `References/`, `Manuscript/`, `Output/`, `paper.toml` or `AGENTS.md`. The one exception is a context card, `References/**/<name>.context.md`, and only below its marker line (see `AGENTS.md`, Context cards).
 
 The original manuscript in `Manuscript/` or the project root is read-only. The generated cache is outside the project; `paperchain doctor --json` reports its paths under `data.cache`.
 
 ## Workflow
 
-1. Run `paperchain doctor --json`. If it is not `ok`, stop and report the problem.
-2. Read `data.cache.index` from the doctor output, then the relevant files in `data.cache.text`.
+1. Run `paperchain start --json`. It prepares the whole project and is safe to repeat. If `data.needs_human` is not empty, stop and ask the human; after they name the manuscript, rerun with `--manuscript "<file>"`. Never accept changed references yourself.
+2. Read the context card of each source you need (`data.cards[].card`), and write the scoped resume for every key in `data.pending_cards` as `AGENTS.md` describes. Read `data.cache.text` only for the pages a card points to. A card is a lead, not evidence.
 3. Draft in `Paper/paper.md` using the citation syntax below.
 4. Run `paperchain check --json`. Fix every error.
 5. Run `paperchain build`. The DOCX appears in `Output/`.

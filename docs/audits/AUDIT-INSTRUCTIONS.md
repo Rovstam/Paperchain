@@ -29,9 +29,9 @@ The user wants to write papers with an AI agent under these constraints:
 
 Do not re-litigate whether the project is necessary unless new evidence changes the answer. The existing `docs/audits/AUDIT-NECESSITY.md` covers that question. This audit is about the remaining revision.
 
-## Current state
+## Current state & Rewrite Blueprint
 
-The working tree contains the fixes from the latest round, including:
+The working tree represents the state after Round 5 plus the Round 7 changes (visible re-blessing, the Zotero export locked in every project, title-based reference folders, context cards, `paperchain start`; see `docs/CHANGELOG.md` and `docs/audits/AUDIT-LOG.md`). The earlier rewrite blueprint was superseded and moved to `Dump/AUDIT-REWRITE-BLUEPRINT.md`; it is not the plan. Of its Zotero guardrail (D4), `check` already blocks citing a source with no entry in the export; only an ingestion-time alert is missing. Existing fixes in this tree include:
 
 - `[build] style = "vancouver"` and `paperchain init --style vancouver`.
 - `lock` hashes `References/library.json` and the CSL file only when a style is configured, and refuses to run while either is missing.
@@ -49,7 +49,8 @@ The working tree contains the fixes from the latest round, including:
 - `[build] reference_doc` is validated like `bibliography` and `csl`. `styles/accepted-csl-ids.txt` is hashed with the CSL in `csl_sha256`, and the writer adapter denies `styles/**`.
 - `build` rewrites media links and checks resources only outside fenced, inline and four-space indented code. Image `data:image/...` URIs are accepted; other `data:` payloads are blocked.
 - BibTeX exports are reported with a conversion command instead of a JSON parse error. A lone `References/library.bib` (no JSON, no `[build] bibliography`) is detected too.
-- Tests: with Pandoc 3.13 on `PATH` (Windows), 259 passed and 2 skipped (POSIX mode bits and symlink privileges). Without Pandoc, 249 passed and 12 skipped.
+- `paperchain start` stops at an ambiguous manuscript before converting or locking anything, and archives a second DOCX manuscript in `Dump/` instead of ingesting it as a citable source.
+- Tests: with Pandoc 3.13 on `PATH` (Windows), 346 passed and 2 skipped (POSIX mode bits and symlink privileges). Without Pandoc, 335 passed and 13 skipped.
 
 Treat these as claims to verify, not as proof. Some documentation or tests may still be stale, and the round-5 fixes have not been exercised against a real Zotero export or a fresh live monograph.
 
