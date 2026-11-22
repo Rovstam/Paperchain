@@ -3,13 +3,15 @@
 ## Set up
 
 ```bash
-git clone <this-repo>
+git clone https://github.com/Rovstam/Paperchain.git
 cd paperchain
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 python -m pip install -e ".[dev]"
 python -m pytest -q
 ```
+
+When working from a fork, use the fork's clone URL instead.
 
 Pandoc is optional for development. The build test skips itself when pandoc is not on PATH; install it to exercise the whole pipeline.
 

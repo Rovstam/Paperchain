@@ -44,7 +44,7 @@ winget install --id JohnMacFarlane.Pandoc -e
 py -m pip install --user pipx
 py -m pipx ensurepath
 # open a new terminal
-git clone <this-repo> paperchain
+git clone https://github.com/Rovstam/Paperchain.git paperchain
 pipx install ./paperchain
 paperchain doctor
 ```
@@ -59,7 +59,7 @@ paperchain doctor
 brew install python@3.12 pandoc pipx
 pipx ensurepath
 # open a new terminal
-git clone <this-repo> paperchain
+git clone https://github.com/Rovstam/Paperchain.git paperchain
 pipx install ./paperchain
 paperchain doctor
 ```
@@ -72,13 +72,21 @@ paperchain doctor
 sudo apt install python3 python3-pip pipx pandoc    # Debian/Ubuntu
 pipx ensurepath
 # open a new terminal
-git clone <this-repo> paperchain
+git clone https://github.com/Rovstam/Paperchain.git paperchain
 pipx install ./paperchain
 paperchain doctor
 ```
 </details>
 
-Until the first PyPI release, install from a clone. After that, `pipx install paperchain` (or `pip install -U paperchain`) is enough, and every paper gets fixes without copying scripts.
+Until the first PyPI release, install from the GitHub clone. You can also install directly without keeping a source checkout:
+
+```bash
+pipx install "git+https://github.com/Rovstam/Paperchain.git"
+```
+
+If you forked Paperchain, replace `Rovstam/Paperchain` in these URLs with your fork, for example `your-name/Paperchain`.
+
+After the PyPI release, `pipx install paperchain` (or `pip install -U paperchain`) will be enough, and every paper will get fixes without copying scripts.
 
 Do **not** copy the repository, `.venv`, `src/` or `tests/` into each paper project. Install the command once; `pipx` keeps it in its own environment. The source checkout itself can live anywhere outside your documents, for example `C:\Tools\paperchain`. A paper project only needs the command and `pandoc` on `PATH`.
 

@@ -32,10 +32,12 @@ pipx --version
 From a clone, until the first PyPI release:
 
 ```bash
-git clone <this-repo> paperchain
+git clone https://github.com/Rovstam/Paperchain.git paperchain
 pipx install ./paperchain
 paperchain doctor
 ```
+
+For a fork, replace `Rovstam/Paperchain` in the clone URL with your GitHub username and repository name.
 
 From PyPI later:
 
